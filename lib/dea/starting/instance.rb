@@ -374,14 +374,22 @@ module Dea
 
     def promise_setup_environment
       Promise.new do |p|
-        script = 'cd / && mkdir -p home/vcap/app && chown vcap:vcap home/vcap/app && ln -s home/vcap/app /app'
-        container.run_script(:app, script, true)
-
-        script = 'dpkg-reconfigure openssh-server && mkdir -p /var/run/sshd && /usr/sbin/sshd'
-        container.run_script(:app, script, true)
         
-        script = 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa && cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
-        container.run_script(:app, script)
+        script = []
+        script << 'cd /'
+        script << 'mkdir -p home/vcap/app'
+        script << 'chown vcap:vcap home/vcap/app'
+        script << 'ln -s home/vcap/app /app'
+        script << 'ssh-keygen -t dsa -N "" -f /etc/ssh/ssh_host_dsa_key'
+        script << 'ssh-keygen -t rsa -N "" -f /etc/ssh/ssh_host_rsa_key'
+        script << 'mkdir -p /var/run/sshd'
+        script << '/usr/sbin/sshd'
+        script << 'mkdir -p /home/vcap/.ssh'
+        script << 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa'
+        script << 'cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
+        script << 'chown -R vcap:vcap /home/vcap/.ssh'
+        
+        container.run_script(:app, script.join(" && "), true)
         
         p.deliver
       end

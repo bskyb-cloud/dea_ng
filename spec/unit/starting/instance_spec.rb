@@ -694,6 +694,78 @@ describe Dea::Instance do
         instance.exit_description.should be_empty
       end
 
+      it 'should generate the host keys' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{ssh-keygen -t dsa -N "" -f /etc/ssh/ssh_host_dsa_key}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+      
+      it 'should generate the host keys' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{ssh-keygen -t rsa -N "" -f /etc/ssh/ssh_host_rsa_key}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+
+      it 'should make the ssh run directory' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{mkdir -p /var/run/sshd}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+
+      it 'should start sshd' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{/usr/sbin/sshd}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+
+      it 'should generate user key' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{mkdir -p /home/vcap/.ssh}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+      
+      it 'should generate user key' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+
+      it 'should apply public key' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+
+      it 'should chown ssh dir' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{chown -R vcap:vcap /home/vcap/.ssh}
+        end
+
+        expect_start.to_not raise_error
+        instance.exit_description.should be_empty        
+      end
+            
       it 'can fail by run failing' do
         msg = 'environment setup failure'
 
@@ -703,6 +775,8 @@ describe Dea::Instance do
 
         expect_start.to raise_error(msg)
       end
+      
+      
     end
 
     shared_examples_for 'start script hook' do |hook|
