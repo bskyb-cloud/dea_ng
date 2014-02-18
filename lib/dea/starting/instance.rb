@@ -192,6 +192,7 @@ module Dea
           optional('warden_handle') => enum(nil, String),
           optional('instance_host_port') => Integer,
           optional('instance_container_port') => Integer,
+          optional('instance_ssh_port') => Integer,
 
           'limits' => limits_schema,
 
@@ -376,6 +377,12 @@ module Dea
         script = 'cd / && mkdir -p home/vcap/app && chown vcap:vcap home/vcap/app && ln -s home/vcap/app /app'
         container.run_script(:app, script, true)
 
+        script = 'dpkg-reconfigure openssh-server && mkdir -p /var/run/sshd && /usr/sbin/sshd'
+        container.run_script(:app, script, true)
+        
+        script = 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa && cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
+        container.run_script(:app, script)
+        
         p.deliver
       end
     end
@@ -513,6 +520,17 @@ module Dea
 
     def instance_container_port
       container.network_ports['container_port']
+    end
+    
+    def instance_ssh_port
+      container.network_ports['ssh_host_port']
+    end
+    
+    def instance_ssh_key
+      script = 'cat /home/vcap/.ssh/id_rsa'
+      response = container.run_script(:app, script)
+      #TODO NEED TO CHECK ERROR HERE
+      response[:stdout]
     end
 
     def promise_droplet
@@ -823,6 +841,8 @@ module Dea
         'warden_host_ip' => container.host_ip,
         'instance_host_port' => container.network_ports['host_port'],
         'instance_container_port' => container.network_ports['container_port'],
+          
+        'instance_ssh_port' => container.network_ports['ssh_host_port'],
 
         'syslog_drain_urls' => attributes['services'].map { |svc_hash| svc_hash['syslog_drain_url'] }.compact,
 
@@ -836,6 +856,7 @@ module Dea
       container.handle = @attributes['warden_handle']
       container.network_ports['host_port'] = @attributes['instance_host_port']
       container.network_ports['container_port'] = @attributes['instance_container_port']
+      container.network_ports['ssh_host_port'] = @attributes['instance_ssh_port']
     end
 
     def determine_exit_description_from_link_response(link_response)
