@@ -1,5 +1,5 @@
 ROOT = File.expand_path("../../..", __FILE__)
-GIT_URL = "git://github.com/cloudfoundry/warden-test-infrastructure.git"
+GIT_URL = "git://github.com/bskyb-cloud/warden-test-infrastructure.git"
 REPO_PATH = "#{ROOT}/tmp/warden-test-infrastructure"
 BOX_PATH = File.expand_path("~/boxes/ci_with_warden_prereqs.box")
 
