@@ -141,6 +141,7 @@ describe Dea::Instance do
           'warden_handle' => 'abc',
           'instance_host_port' => 1234,
           'instance_container_port' => 5678,
+          'instance_ssh_port' => 5679
         )
       end
 
@@ -149,6 +150,7 @@ describe Dea::Instance do
       its(:warden_handle) { should == 'abc' }
       its(:instance_host_port) { should == 1234 }
       its(:instance_container_port) { should == 5678 }
+      its(:instance_ssh_port) { should == 5679 }
     end
   end
 
@@ -662,6 +664,16 @@ describe Dea::Instance do
       end
     end
 
+    describe 'getting the private key' do
+      it 'should get private key from container' do
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ %r{cat /home/vcap/.ssh/id_rsa}
+          {:stdout => "fakekey"}
+        end
+        instance.instance_ssh_key.should == "fakekey"
+      end
+    end
+    
     describe 'setting up environment' do
       before do
         instance.unstub(:promise_setup_environment)

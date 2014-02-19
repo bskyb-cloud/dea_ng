@@ -537,7 +537,6 @@ module Dea
     def instance_ssh_key
       script = 'cat /home/vcap/.ssh/id_rsa'
       response = container.run_script(:app, script)
-      #TODO NEED TO CHECK ERROR HERE
       response[:stdout]
     end
 
