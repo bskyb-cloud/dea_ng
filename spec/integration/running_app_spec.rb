@@ -122,6 +122,34 @@ describe "Running an app", :type => :integration, :requires_warden => true do
         }.to change { dea_memory }.by(-64)
       end
     end
+    
+    describe "the running app" do
+      
+      it "can be ssh'd to" do
+        stage
+        wait_until_started
+        id = dea_id
+        droplet_message = Yajl::Encoder.encode("droplet" => app_id, "indices" => [1], "states" => ["RUNNING"])
+        nats.with_nats do
+          NATS.subscribe("router.register") do |_|
+            NATS.request("dea.ssh.droplet", droplet_message, :timeout => 2) do |response_json|
+              response = JSON.parse(response_json)
+              
+              response["ip"].should == VCAP.local_ip
+              response["sshkey"].should =~ /-----BEGIN RSA PRIVATE KEY-----/
+              response["user"].should == "vcap"
+              response["port"].to_s.should =~ /^\d+$/
+              
+              NATS.stop
+            end
+            
+          end
+          NATS.publish("dea.#{id}.start", Yajl::Encoder.encode(start_message))
+        end
+        stop
+        wait_until_stopped
+      end
+    end
 
     describe "stopping the app" do
       it "restores the dea's available memory" do
