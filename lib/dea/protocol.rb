@@ -68,6 +68,17 @@ module Dea::Protocol::V1
       response
     end
   end
+  
+  class SSHDropletResponse
+    def self.generate(port, sshkey)
+      { 
+        "ip" => VCAP.local_ip,
+        "sshkey" => sshkey,
+        "user" => "vcap",
+        "port" => port
+      }
+    end
+  end
 
   class AdvertiseMessage
     def self.generate(message={})
