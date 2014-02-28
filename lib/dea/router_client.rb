@@ -36,9 +36,17 @@ module Dea
 
     # Same format is used for both registration and unregistration
     def generate_instance_request(instance, opts = {})
+
+      uris = []
+      if (opts[:uris])
+        uris = process_urls(instance, opts[:uris])
+      else
+        uris = process_urls(instance, instance.application_uris)
+      end
+
       { "dea"  => bootstrap.uuid,
         "app"  => instance.application_id,
-        "uris" => opts[:uris] || instance.application_uris,
+        "uris" => uris,
         "host" => bootstrap.local_ip,
         "port" => instance.instance_host_port,
         "tags" => { "component" => "dea-#{bootstrap.config["index"]}" },
@@ -53,6 +61,16 @@ module Dea
         "uris" => [uri],
         "tags" => { "component" => "directory-server-#{bootstrap.config["index"]}" },
       }
+    end
+    
+    def process_urls(instance, uris)
+      newuris = []
+      if uris 
+        uris.each { |uri| 
+          newuris.push(uri.sub( "[index]", instance.instance_index.to_s ))
+        }
+      end
+      newuris
     end
   end
 end

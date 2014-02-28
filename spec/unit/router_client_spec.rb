@@ -38,12 +38,14 @@ describe Dea::RouterClient do
   let(:instance_host_port) { "7890" }
   let(:private_instance_id) { "instance-id-123" }
   let(:application_uri) { "my-super-app.cf-app.com" }
+    
   let(:instance) do
     double("instance",
       :application_id => application_id,
       :instance_host_port => instance_host_port,
       :private_instance_id => private_instance_id,
-      :application_uris => [application_uri]
+      :application_uris => [application_uri],
+      :instance_index => 0
     )
   end
 
@@ -90,6 +92,15 @@ describe Dea::RouterClient do
       expect(message["tags"]).to eq({ "component" => "dea-5" })
       expect(message["private_instance_id"]).to eq(private_instance_id)
     end
+    
+    it "sends a corrent instance index when [index] is present" do
+      client.register_instance(instance, :uris => ["test-[index].someurl.com"])
+    
+      expect(nats.last_topic).to eq("router.register")
+      message = nats.last_message
+    
+      expect(message["uris"]).to eq(["test-0.someurl.com"])
+    end
 
     context "when uri is not passed" do
       it "uses application uri" do
@@ -117,6 +128,15 @@ describe Dea::RouterClient do
       expect(message["port"]).to eq(instance_host_port)
       expect(message["tags"]).to eq({ "component" => "dea-5" })
       expect(message["private_instance_id"]).to eq(private_instance_id)
+    end
+    
+    it "sends a corrent instance index when [index] is present" do
+      client.unregister_instance(instance, :uris => ["test-[index].someurl.com"])
+    
+      expect(nats.last_topic).to eq("router.unregister")
+      message = nats.last_message
+    
+      expect(message["uris"]).to eq(["test-0.someurl.com"])
     end
 
     context "when uri is not passed" do
