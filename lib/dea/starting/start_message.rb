@@ -24,7 +24,7 @@ class StartMessage
   end
 
   def uris
-    (message["uris"] || []).map { |uri| URI(uri) }
+    message["uris"] or []
   end
 
   def prod
