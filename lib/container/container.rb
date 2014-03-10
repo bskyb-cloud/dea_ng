@@ -190,6 +190,16 @@ class Container
     network_ports['ssh_container_port'] = 22
   end
 
+  def open_network_destination(network, port)
+    request = ::Warden::Protocol::NetOutRequest.new(handle: handle, network: network , port: port)
+    call(:app, request)
+  end
+
+  def copy_in_file(src, dest)
+    request = ::Warden::Protocol::CopyInRequest.new(handle: handle, src_path: src , dst_path: dest)
+    call(:app, request)
+  end
+
   def info
     request = ::Warden::Protocol::InfoRequest.new
     request.handle = @handle

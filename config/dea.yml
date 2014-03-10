@@ -68,3 +68,7 @@ stacks:
 
 placement_properties:
   zone: "CRAZY_TOWN"
+
+# firewalls:
+#   script: /var/vcap/packages/dea_next/firewalls/obtain_firewall_config.rb
+#   args: dev # config file tag to pick up for this environment.
