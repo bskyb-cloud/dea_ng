@@ -107,6 +107,11 @@ module Dea
             optional("memory_limit_mb") => Integer,
             optional("disk_limit_mb") => Integer,
             optional("cpu_limit_shares") => Integer
+          },
+
+          optional("firewalls") => {
+            optional("script") => String,
+            optional("args") => String
           }
         }
       end

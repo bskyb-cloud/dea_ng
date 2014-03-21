@@ -552,6 +552,7 @@ describe Dea::Instance do
       instance.container.stub(:create_container)
       instance.stub(:promise_setup_environment).and_return(delivering_promise)
       instance.stub(:promise_extract_droplet).and_return(delivering_promise)
+      instance.stub(:promise_firewalls).and_return(delivering_promise)
       instance.stub(:promise_prepare_start_script).and_return(delivering_promise)
       instance.stub(:promise_exec_hook_script).with('before_start').and_return(delivering_promise)
       instance.stub(:promise_start).and_return(delivering_promise)
@@ -681,6 +682,72 @@ describe Dea::Instance do
         end
 
         expect_start.to raise_error(msg)
+      end
+    end
+
+    describe 'setting up the firewalls' do
+      before do
+        instance.unstub(:promise_firewalls)
+        bootstrap.stub(:config).and_return('firewalls' => { 'script' => '/var/vcap/somescript', 'environment' => '12345' })
+
+        instance.attributes['services'] = [
+          { 'credentials' => { 'host' => '10.0.0.4,10.0.0.5', 'port' => '80' } },
+          { 'credentials' => { 'host' => '10.0.0.6', 'port' => '80' } }
+        ]
+
+        instance.container.stub(:copy_in_file) do |src, dest|
+          src.should =~ /\/var\/vcap\/somescript/
+          dest.should =~ /\/tmp\/firewallscript/
+
+          instance.container.stub(:copy_in_file) do |src, dest|
+            dest.should =~ /\/home\/vcap\/logs\/firewalls.log/
+          end
+        end
+      end
+
+      it 'should set call into warden and create rules' do
+
+        instance.container.stub(:run_script) do |_, script|
+          script.should =~ /chmod 755 \/tmp\/firewallscript && \/tmp\/firewallscript/
+          instance.container.stub(:run_script) do |_, script|
+            script =~ /rm \/tmp\/firewallscript/
+          end
+          response = {
+            :stdout => "10.0.0.1:80\n10.0.0.2:80\n"
+          }
+        end
+
+        instance.container.stub(:open_network_destination) do | host, port|
+          host.should =~ /10.0.0.1/
+          port.should == 80
+          instance.container.stub(:open_network_destination) do | host, port|
+            host.should =~ /10.0.0.2/
+            port.should == 80
+            instance.container.stub(:open_network_destination) do | host, port|
+              host.should =~ /10.0.0.4/
+              port.should == 80
+              instance.container.stub(:open_network_destination) do | host, port|
+                host.should =~ /10.0.0.5/
+                port.should == 80
+                instance.container.stub(:open_network_destination) do | host, port|
+                  host.should =~ /10.0.0.6/
+                  port.should == 80
+                end
+              end
+            end
+          end
+        end
+
+        instance.promise_firewalls.resolve
+      end
+
+      it 'should return an error if the start script fails' do
+
+        instance.container.stub(:run_script).and_raise(Container::WardenError.new("Script Failed", {:stdout => "error message" }))
+
+        expect {
+          instance.promise_firewalls.resolve
+        }.to raise_error("Application of container firewalls failed. Script Failed\nSTDOUT:\nerror message\nSTDERR:\n")
       end
     end
 

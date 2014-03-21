@@ -215,6 +215,50 @@ describe Container do
     end
   end
 
+  describe '#open_network_destination' do
+    let(:network) { "10.0.0.1" }
+    let(:port) { 80 }
+    let(:response) { }
+
+    it 'calls call with the host and port' do
+      container.should_receive(:call) do |name, request|
+        expect(name).to eq(:app)
+
+        expect(request).to be_an_instance_of(::Warden::Protocol::NetOutRequest)
+        expect(request.handle).to eq(handle)
+        expect(request.network).to eq(network)
+        expect(request.port).to eq(port)
+
+        response
+      end
+
+      result = container.open_network_destination(network, port)
+      expect(result).to eq(response)
+    end
+  end
+
+  describe '#copy_in_file' do
+    let(:src) { "/tmp/somefile" }
+    let(:dest) { "/tmp/destfile" }
+    let(:response) { }
+
+    it 'calls call with the src and dest' do
+      container.should_receive(:call) do |name, request|
+        expect(name).to eq(:app)
+
+        expect(request).to be_an_instance_of(::Warden::Protocol::CopyInRequest)
+        expect(request.handle).to eq(handle)
+        expect(request.src_path).to eq(src)
+        expect(request.dst_path).to eq(dest)
+
+        response
+      end
+
+      result = container.copy_in_file(src, dest)
+      expect(result).to eq(response)
+    end
+  end
+
   describe '#run_script' do
     let(:script) { double('./citizien_kane') }
     let(:response) { double('response', :exit_status => 0) }

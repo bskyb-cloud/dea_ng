@@ -5,6 +5,7 @@ require 'steno'
 require 'steno/core_ext'
 require 'vcap/common'
 require 'yaml'
+require 'tempfile'
 
 require 'dea/env'
 require 'dea/health_check/port_open'
@@ -409,7 +410,7 @@ module Dea
         script << 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa'
         script << 'cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
         script << 'chown -R vcap:vcap /home/vcap/.ssh'
-        
+
         container.run_script(:app, script.join(" && "), true)
         
         p.deliver
@@ -422,6 +423,54 @@ module Dea
 
         container.run_script(:app, script)
 
+        p.deliver
+      end
+    end
+
+    def promise_firewalls
+      Promise.new do |p|
+        if bootstrap.config['firewalls']
+          if bootstrap.config['firewalls']['script']
+            tmplogfile = Tempfile.new('firewalllog')
+            begin
+              args = bootstrap.config['firewalls']['args']
+              logger.debug("Adding in firewalls")
+
+              container.copy_in_file(bootstrap.config['firewalls']['script'], "/tmp/firewallscript")
+
+              response = container.run_script(:app, "chmod 755 /tmp/firewallscript && /tmp/firewallscript #{args} 2>&1")
+
+              if response[:stdout]
+                response[:stdout].split(/\n/).each do |line|
+                  host, port = line.split(/:/)
+                  tmplogfile.write("Opening up user requested firewall to #{host}:#{port}\n")
+                  container.open_network_destination(host, port.to_i)
+                end
+              end
+
+              attributes['services'].each do |svc|
+                svc['credentials']['host'].split(/\s*,\s*/).each do |host|
+                  tmplogfile.write("Opening up service firewall to #{host}:#{svc['credentials']['port']}\n")
+                  container.open_network_destination(host, svc['credentials']['port'].to_i)
+                end
+              end
+
+              container.run_script(:app, "rm /tmp/firewallscript")
+            rescue Container::WardenError => e
+              msg = "Application of container firewalls failed. #{e.to_s}\nSTDOUT:\n#{e.result[:stdout]}\nSTDERR:\n#{e.result[:stderr]}"
+              logger.warn("Application of container firewalls failed: #{msg}")
+              tmplogfile.write("#{Time.now.to_s}:\n#{msg}")
+              p.fail(UserFacingError.new(msg))
+            rescue Exception => e
+              msg = "Application of container firewalls failed. #{e.to_s}"
+              logger.warn("Application of container firewalls failed: #{msg}")
+              tmplogfile.write("#{Time.now.to_s}:\n#{msg}")
+              raise e
+            end
+            tmplogfile.close
+            container.copy_in_file(tmplogfile.path, "/home/vcap/logs/firewalls.log")
+          end
+        end
         p.deliver
       end
     end
@@ -493,6 +542,7 @@ module Dea
 
         [
           promise_extract_droplet,
+          promise_firewalls,
           promise_exec_hook_script('before_start'),
           promise_start
         ].each(&:resolve)
