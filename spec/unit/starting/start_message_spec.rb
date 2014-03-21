@@ -35,7 +35,7 @@ describe StartMessage do
   its(:droplet) { should eq "some-app-id" }
   its(:version) { should eq "some-version" }
   its(:name) { should eq "some-app-name" }
-  its(:uris) { should eq [URI("http://www.someuri.com")] }
+  its(:uris) { should eq ["http://www.someuri.com"] }
   its(:prod) { should be_false }
   its(:executable_uri) { should eq URI("http://www.someuri.com") }
   its(:executable_file) { should eq "deprecated" }
