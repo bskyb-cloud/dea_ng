@@ -398,6 +398,14 @@ module Dea
       nil
     end
 
+    def handle_dea_ssh_droplet(message)
+      instance_registry.instances_filtered_by_message(message) do |instance|
+        response = Dea::Protocol::V1::SSHDropletResponse.generate(
+                  instance.instance_ssh_port,
+                  instance.instance_ssh_key)
+        message.respond(response)
+      end
+    end
 ### /Handle_Nats_Messages
 
     def send_staging_stop

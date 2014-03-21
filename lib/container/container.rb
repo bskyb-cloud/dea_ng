@@ -183,6 +183,11 @@ class Container
     response = call(:app, request)
     network_ports['console_host_port'] = response.host_port
     network_ports['console_container_port'] = response.container_port
+      
+    request = ::Warden::Protocol::NetInRequest.new(handle: handle, container_port: 22)
+    response = call(:app, request)
+    network_ports['ssh_host_port'] = response.host_port
+    network_ports['ssh_container_port'] = 22
   end
 
   def info

@@ -213,6 +213,7 @@ module Dea
           optional('warden_handle') => enum(nil, String),
           optional('instance_host_port') => Integer,
           optional('instance_container_port') => Integer,
+          optional('instance_ssh_port') => Integer,
 
           'limits' => limits_schema,
 
@@ -394,9 +395,23 @@ module Dea
 
     def promise_setup_environment
       Promise.new do |p|
-        script = 'cd / && mkdir -p home/vcap/app && chown vcap:vcap home/vcap/app && ln -s home/vcap/app /app'
-        container.run_script(:app, script, true)
-
+        
+        script = []
+        script << 'cd /'
+        script << 'mkdir -p home/vcap/app'
+        script << 'chown vcap:vcap home/vcap/app'
+        script << 'ln -s home/vcap/app /app'
+        script << 'ssh-keygen -t dsa -N "" -f /etc/ssh/ssh_host_dsa_key'
+        script << 'ssh-keygen -t rsa -N "" -f /etc/ssh/ssh_host_rsa_key'
+        script << 'mkdir -p /var/run/sshd'
+        script << '/usr/sbin/sshd'
+        script << 'mkdir -p /home/vcap/.ssh'
+        script << 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa'
+        script << 'cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
+        script << 'chown -R vcap:vcap /home/vcap/.ssh'
+        
+        container.run_script(:app, script.join(" && "), true)
+        
         p.deliver
       end
     end
@@ -538,6 +553,16 @@ module Dea
 
     def instance_container_port
       container.network_ports['container_port']
+    end
+    
+    def instance_ssh_port
+      container.network_ports['ssh_host_port']
+    end
+    
+    def instance_ssh_key
+      script = 'cat /home/vcap/.ssh/id_rsa'
+      response = container.run_script(:app, script)
+      response[:stdout]
     end
 
     def promise_droplet
@@ -848,6 +873,8 @@ module Dea
         'warden_host_ip' => container.host_ip,
         'instance_host_port' => container.network_ports['host_port'],
         'instance_container_port' => container.network_ports['container_port'],
+          
+        'instance_ssh_port' => container.network_ports['ssh_host_port'],
 
         'syslog_drain_urls' => attributes['services'].map { |svc_hash| svc_hash['syslog_drain_url'] }.compact,
 
@@ -861,6 +888,7 @@ module Dea
       container.handle = @attributes['warden_handle']
       container.network_ports['host_port'] = @attributes['instance_host_port']
       container.network_ports['container_port'] = @attributes['instance_container_port']
+      container.network_ports['ssh_host_port'] = @attributes['instance_ssh_port']
     end
 
     def determine_exit_description_from_link_response(link_response)
