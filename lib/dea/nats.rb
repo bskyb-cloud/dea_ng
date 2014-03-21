@@ -45,6 +45,10 @@ module Dea
       subscribe("dea.find.droplet") do |message|
         bootstrap.handle_dea_find_droplet(message)
       end
+      
+      subscribe("dea.ssh.droplet") do |message|
+        Fiber.new { bootstrap.handle_dea_ssh_droplet(message) }.resume
+      end
     end
 
     def stop
