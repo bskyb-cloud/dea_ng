@@ -1,5 +1,4 @@
 # coding: UTF-8
-
 require "spec_helper"
 require "dea/bootstrap"
 
@@ -14,7 +13,7 @@ describe Dea do
 
   describe "responses to messages received on 'dea.ssh.droplet'" do
     def run
-      em(:timeout => 1) do
+      with_event_machine(:timeout => 1) do
         bootstrap.setup
         bootstrap.start
 
