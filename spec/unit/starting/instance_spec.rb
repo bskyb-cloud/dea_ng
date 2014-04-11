@@ -761,6 +761,18 @@ describe Dea::Instance do
       end
     end
     
+    describe 'getting instance zone' do
+      it 'should return CRAZY_TOWN' do
+        bootstrap.stub(:config).and_return('placement_properties' => { 'zone' => 'CRAZY_TOWN' })
+        instance.instance_zone.should == "CRAZY_TOWN"
+      end
+
+      it 'should return empty string' do
+        bootstrap.stub(:config).and_return('a' => 'b')
+        instance.instance_zone.should == ""
+      end
+    end
+
     describe 'setting up environment' do
       before do
         instance.unstub(:promise_setup_environment)

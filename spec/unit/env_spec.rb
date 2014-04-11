@@ -29,7 +29,7 @@ describe Dea::Env do
 
   let(:instance) do
     attributes = {"instance_id" => VCAP.secure_uuid}
-    double(:instance, attributes: attributes, instance_container_port: 4567, state_starting_timestamp: Time.now.to_f)
+    double(:instance, attributes: attributes, instance_container_port: 4567, state_starting_timestamp: Time.now.to_f, instance_zone: "zone1")
   end
 
   let(:starting_message) do
@@ -186,6 +186,7 @@ describe Dea::Env do
       it_exports "VCAP_APP_PORT", "4567"
       it_exports "VCAP_DEBUG_IP", ""
       it_exports "VCAP_DEBUG_PORT", ""
+      it_exports "VCAP_ZONE", "zone1"
       it_exports "PORT", "4567"
       it_exports "MEMORY_LIMIT", "512m"
       it_exports "HOME", "#{Dir.pwd}/app"
