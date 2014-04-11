@@ -7,7 +7,7 @@ module Dea::Starting
   describe Env do
     subject(:env) {Env.new(message, instance)}
     let(:message) { instance_double("StartMessage") }
-    let(:instance) { instance_double("Dea::Instance", instance_container_port: "fake_port") }
+    let(:instance) { instance_double("Dea::Instance", instance_container_port: "fake_port", instance_zone: "zone1") }
 
     describe "system environment variables" do
       subject(:system_environment_variables) { env.system_environment_variables }
@@ -18,6 +18,7 @@ module Dea::Starting
                                                       %w(TMPDIR $PWD/tmp),
                                                       %w(VCAP_APP_HOST 0.0.0.0),
                                                       %w(VCAP_APP_PORT fake_port),
+                                                      %w(VCAP_ZONE zone1),
                                                       %w(PORT $VCAP_APP_PORT)
                                                     ])
       end

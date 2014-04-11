@@ -16,6 +16,7 @@ module Dea
           ["TMPDIR", "$PWD/tmp"],
           ["VCAP_APP_HOST", "0.0.0.0"],
           ["VCAP_APP_PORT", @instance.instance_container_port],
+          ["VCAP_ZONE", @instance.instance_zone],
           ["PORT", "$VCAP_APP_PORT"]
         ]
       end

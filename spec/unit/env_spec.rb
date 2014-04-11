@@ -44,7 +44,7 @@ describe Dea::Env do
 
   let(:instance) do
     attributes = {"instance_id" => VCAP.secure_uuid}
-    double(:instance, attributes: attributes, instance_container_port: 4567, state_starting_timestamp: Time.now.to_f)
+    double(:instance, attributes: attributes, instance_container_port: 4567, state_starting_timestamp: Time.now.to_f, instance_zone: '')
   end
 
   let(:start_message) do

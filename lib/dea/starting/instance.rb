@@ -614,6 +614,14 @@ module Dea
       response = container.run_script(:app, script)
       response[:stdout]
     end
+    
+    def instance_zone
+      if (bootstrap.config['placement_properties'])
+        bootstrap.config['placement_properties']['zone']
+      else
+        ""
+      end
+    end
 
     def promise_droplet
       Promise.new do |p|
