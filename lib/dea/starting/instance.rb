@@ -427,6 +427,13 @@ module Dea
       end
     end
 
+    def setup_firewall(credentials, tmplogfile)
+        credentials['host'].split(/\s*,\s*/).each do |host|
+            tmplogfile.write("Opening up service firewall to #{host}:#{credentials['port']}\n")
+            container.open_network_destination(host, credentials['port'].to_i)
+        end
+    end
+
     def promise_firewalls
       Promise.new do |p|
         if bootstrap.config['firewalls']
@@ -449,10 +456,13 @@ module Dea
               end
 
               attributes['services'].each do |svc|
-                svc['credentials']['host'].split(/\s*,\s*/).each do |host|
-                  tmplogfile.write("Opening up service firewall to #{host}:#{svc['credentials']['port']}\n")
-                  container.open_network_destination(host, svc['credentials']['port'].to_i)
+                if svc['credentials'].has_key?('host')
+                  setup_firewall(svc['credentials'], tmplogfile)
                 end
+                if svc['credentials'].has_key?(instance_zone) && svc['credentials'][instance_zone].has_key?('host')
+                  setup_firewall(svc['credentials'][instance_zone], tmplogfile)                    
+                end
+
               end
 
               container.run_script(:app, "rm /tmp/firewallscript")
