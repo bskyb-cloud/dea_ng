@@ -215,6 +215,50 @@ describe Container do
     end
   end
 
+  describe '#open_network_destination' do
+    let(:network) { "10.0.0.1" }
+    let(:port) { 80 }
+    let(:response) { }
+
+    it 'calls call with the host and port' do
+      container.should_receive(:call) do |name, request|
+        expect(name).to eq(:app)
+
+        expect(request).to be_an_instance_of(::Warden::Protocol::NetOutRequest)
+        expect(request.handle).to eq(handle)
+        expect(request.network).to eq(network)
+        expect(request.port).to eq(port)
+
+        response
+      end
+
+      result = container.open_network_destination(network, port)
+      expect(result).to eq(response)
+    end
+  end
+
+  describe '#copy_in_file' do
+    let(:src) { "/tmp/somefile" }
+    let(:dest) { "/tmp/destfile" }
+    let(:response) { }
+
+    it 'calls call with the src and dest' do
+      container.should_receive(:call) do |name, request|
+        expect(name).to eq(:app)
+
+        expect(request).to be_an_instance_of(::Warden::Protocol::CopyInRequest)
+        expect(request.handle).to eq(handle)
+        expect(request.src_path).to eq(src)
+        expect(request.dst_path).to eq(dest)
+
+        response
+      end
+
+      result = container.copy_in_file(src, dest)
+      expect(result).to eq(response)
+    end
+  end
+
   describe '#run_script' do
     let(:script) { double('./citizien_kane') }
     let(:response) { double('response', :exit_status => 0) }
@@ -334,35 +378,23 @@ describe Container do
   end
 
   describe '#setup_network' do
-    let(:response_a) { double('network_response', host_port: 8765, container_port: 000)}
-    let(:response_b) { double('network_response', host_port: 1111, container_port: 2222)}
-    let(:response_c) { double('network_response', host_port: 1112, container_port: 22)}
-      
     it 'makes a create network request and returns the ports' do
-      client_provider.should_receive(:get).with(:app).exactly(3).and_return(connection)
+      client_provider.should_receive(:get).with(:app).twice.and_return(connection)
       connection.should_receive(:call) do |request|
         expect(request).to be_an_instance_of(::Warden::Protocol::NetInRequest)
         expect(request.handle).to eq(container.handle)
-        response_a
-      end.ordered
-      
-      connection.should_receive(:call) do |request|
-        expect(request).to be_an_instance_of(::Warden::Protocol::NetInRequest)
-        response_b
-      end.ordered
+        double('network_response', host_port: 8765, container_port: 000)
+      end
 
       connection.should_receive(:call) do |request|
         expect(request).to be_an_instance_of(::Warden::Protocol::NetInRequest)
-        response_c
+        double('network_response', host_port: 1112, container_port: 22)
       end.ordered
       
       container.setup_network
 
       expect(container.network_ports['host_port']).to eql(8765)
       expect(container.network_ports['container_port']).to eql(000)
-
-      expect(container.network_ports['console_host_port']).to eql(1111)
-      expect(container.network_ports['console_container_port']).to eql(2222)
         
       expect(container.network_ports['ssh_host_port']).to eql(1112)
       expect(container.network_ports['ssh_container_port']).to eql(22)
@@ -473,7 +505,7 @@ describe Container do
 
   describe '#link' do
     it 'calls #call_with_retry correctly' do
-      fake_response = instance_double(::Warden::Protocol::LinkResponse)
+      fake_response = "fake response"
 
       container.should_receive(:call_with_retry) do |name, request|
         expect(name).to eq(:link)

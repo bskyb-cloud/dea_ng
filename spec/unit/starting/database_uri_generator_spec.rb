@@ -30,6 +30,16 @@ describe Dea::DatabaseUriGenerator do
         it { should eq "postgres://username:password@host/db" }
       end
 
+      context "and there uri is for db2" do
+        let(:services_env) { [{"credentials" => {"uri" => "db2://username:password@host/db"}}] }
+        it { should eq "ibmdb://username:password@host/db" }
+      end
+
+      context "and there uri is for informix" do
+        let(:services_env) { [{"credentials" => {"uri" => "informix://username:password@host/db"}}] }
+        it { should eq "ibmdb://username:password@host/db" }
+      end
+
       context "and there are more than one production relational database" do
         let(:services_env) do
           [
@@ -58,6 +68,21 @@ describe Dea::DatabaseUriGenerator do
     context "when there are no services" do
       let(:services_env) { nil }
       it { should be_nil }
+    end
+  end
+
+  describe "dealing with nils" do
+    let(:services_env) { [nil] }
+
+    it "should be fine" do
+      expect{services.database_uri}.to_not raise_error
+    end
+  end
+
+  describe "dealing with services which dont have credentials" do
+    let(:services_env) { [{}] }
+    it "should be fine" do
+      expect{services.database_uri}.to_not raise_error
     end
   end
 end

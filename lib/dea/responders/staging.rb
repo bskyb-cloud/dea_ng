@@ -40,7 +40,7 @@ module Dea::Responders
       logger = logger_for_app(app_id)
 
       Dea::Loggregator.emit(app_id, "Got staging request for app with id #{app_id}")
-      logger.info('staging.handle.start', request: message)
+      logger.debug('staging.handle.start', request: message.inspect)
 
       task = Dea::StagingTask.new(bootstrap, dir_server, message, buildpacks_in_use, logger)
       unless resource_manager.could_reserve?(task.memory_limit_mb, task.disk_limit_mb)
@@ -114,7 +114,7 @@ module Dea::Responders
       task.after_setup_callback do |error|
         respond_to_response(response, {
           task_id: task.task_id,
-          streaming_log_url: task.streaming_log_url,
+          task_streaming_log_url: task.streaming_log_url,
           error: (error.to_s if error)
         })
       end
@@ -122,12 +122,16 @@ module Dea::Responders
 
     def notify_completion(response, task)
       task.after_complete_callback do |error|
-        respond_to_response(response, {
+        data = {
           task_id: task.task_id,
-          error: (error.to_s if error),
           detected_buildpack: task.detected_buildpack,
+          buildpack_key: task.buildpack_key,
           droplet_sha1: task.droplet_sha1
-        })
+        }
+        data[:error] = error.to_s if error
+        data[:error_info] = task.error_info if task.error_info
+
+        respond_to_response(response, data)
 
         # Unregistering the staging task will release the reservation of excess memory reserved for the app,
         # if the app requires more memory than the staging process.
@@ -160,13 +164,7 @@ module Dea::Responders
     end
 
     def respond_to_response(response, params)
-      response.respond(
-        'task_id' => params[:task_id],
-        'task_streaming_log_url' => params[:streaming_log_url],
-        'detected_buildpack' => params[:detected_buildpack],
-        'error' => params[:error],
-        'droplet_sha1' => params[:droplet_sha1]
-      )
+      response.respond(params)
     end
 
     def logger_for_app(app_id)

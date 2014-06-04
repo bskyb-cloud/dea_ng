@@ -1,13 +1,15 @@
 module Dea
   class DatabaseUriGenerator
-    VALID_DB_TYPES = %w[mysql mysql2 postgres postgresql].freeze
+    VALID_DB_TYPES = %w[mysql mysql2 postgres postgresql db2 informix].freeze
     RAILS_STYLE_DATABASE_TO_ADAPTER_MAPPING = {
       'mysql' => 'mysql2',
-      'postgresql' => 'postgres'
+      'postgresql' => 'postgres',
+      'db2' => 'ibmdb',
+      'informix' => 'ibmdb'
     }.freeze
 
     def initialize(services)
-      @services = services || []
+      @services = Array(services).compact || []
     end
 
     def database_uri
@@ -27,7 +29,8 @@ module Dea
     def bound_relational_valid_databases
       @bound_relational_valid_databases ||= @services.inject([]) do |collection, binding|
         begin
-          if binding["credentials"]["uri"]
+          credentials = binding["credentials"]
+          if credentials && credentials["uri"]
             uri = URI.parse(binding["credentials"]["uri"])
             collection << {uri: uri, name: binding["name"]} if VALID_DB_TYPES.include?(uri.scheme)
           end

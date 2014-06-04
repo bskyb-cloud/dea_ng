@@ -5,6 +5,7 @@ require 'steno'
 require 'steno/core_ext'
 require 'vcap/common'
 require 'yaml'
+require 'tempfile'
 
 require 'dea/env'
 require 'dea/health_check/port_open'
@@ -30,7 +31,6 @@ module Dea
       STOPPING = 'STOPPING'
       STOPPED = 'STOPPED'
       CRASHED = 'CRASHED'
-      DELETED = 'DELETED'
       RESUMING = 'RESUMING'
       EVACUATING = 'EVACUATING'
 
@@ -48,8 +48,6 @@ module Dea
             STOPPED
           when 'CRASHED'
             CRASHED
-          when 'DELETED'
-            DELETED
           when 'RESUMING'
             RESUMING
           when 'EVACUATING'
@@ -73,8 +71,6 @@ module Dea
             'STOPPED'
           when Dea::Instance::State::CRASHED
             'CRASHED'
-          when Dea::Instance::State::DELETED
-            'DELETED'
           when Dea::Instance::State::RESUMING
             'RESUMING'
           when Dea::Instance::State::EVACUATING
@@ -409,7 +405,7 @@ module Dea
         script << 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa'
         script << 'cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
         script << 'chown -R vcap:vcap /home/vcap/.ssh'
-        
+
         container.run_script(:app, script.join(" && "), true)
         
         p.deliver
@@ -422,6 +418,64 @@ module Dea
 
         container.run_script(:app, script)
 
+        p.deliver
+      end
+    end
+
+    def setup_firewall(credentials, tmplogfile)
+        credentials['host'].split(/\s*,\s*/).each do |host|
+            tmplogfile.write("Opening up service firewall to #{host}:#{credentials['port']}\n")
+            container.open_network_destination(host, credentials['port'].to_i)
+        end
+    end
+
+    def promise_firewalls
+      Promise.new do |p|
+        if bootstrap.config['firewalls']
+          if bootstrap.config['firewalls']['script']
+            tmplogfile = Tempfile.new('firewalllog')
+            begin
+              args = bootstrap.config['firewalls']['args']
+              logger.debug("Adding in firewalls")
+
+              container.copy_in_file(bootstrap.config['firewalls']['script'], "/tmp/firewallscript")
+
+              response = container.run_script(:app, "chmod 755 /tmp/firewallscript && /tmp/firewallscript #{args} 2>&1")
+
+              if response[:stdout]
+                response[:stdout].split(/\n/).each do |line|
+                  host, port = line.split(/:/)
+                  tmplogfile.write("Opening up user requested firewall to #{host}:#{port}\n")
+                  container.open_network_destination(host, port.to_i)
+                end
+              end
+
+              attributes['services'].each do |svc|
+                if svc['credentials'].has_key?('host')
+                  setup_firewall(svc['credentials'], tmplogfile)
+                end
+                if svc['credentials'].has_key?(instance_zone) && svc['credentials'][instance_zone].has_key?('host')
+                  setup_firewall(svc['credentials'][instance_zone], tmplogfile)                    
+                end
+
+              end
+
+              container.run_script(:app, "rm /tmp/firewallscript")
+            rescue Container::WardenError => e
+              msg = "Application of container firewalls failed. #{e.to_s}\nSTDOUT:\n#{e.result[:stdout]}\nSTDERR:\n#{e.result[:stderr]}"
+              logger.warn("Application of container firewalls failed: #{msg}")
+              tmplogfile.write("#{Time.now.to_s}:\n#{msg}")
+              p.fail(UserFacingError.new(msg))
+            rescue Exception => e
+              msg = "Application of container firewalls failed. #{e.to_s}"
+              logger.warn("Application of container firewalls failed: #{msg}")
+              tmplogfile.write("#{Time.now.to_s}:\n#{msg}")
+              raise e
+            end
+            tmplogfile.close
+            container.copy_in_file(tmplogfile.path, "/home/vcap/logs/firewalls.log")
+          end
+        end
         p.deliver
       end
     end
@@ -481,21 +535,22 @@ module Dea
 
     def start(&callback)
       p = Promise.new do
-        logger.info 'droplet.starting'
+        logger.info('droplet.starting')
 
         promise_state(State::BORN, State::STARTING).resolve
 
         # Concurrently download droplet and setup container
-        [
+        Promise.run_in_parallel_and_join(
           promise_droplet,
           promise_container
-        ].each(&:run).each(&:resolve)
+        )
 
-        [
+        Promise.run_serially(
           promise_extract_droplet,
+          promise_firewalls,
           promise_exec_hook_script('before_start'),
           promise_start
-        ].each(&:resolve)
+        )
 
         on(Transition.new(:starting, :crashed)) do
           cancel_health_check
@@ -534,7 +589,7 @@ module Dea
         with_network = true
         container.create_container(
           bind_mounts: bind_mounts + config['bind_mounts'],
-          limit_cpu: config['instance']['cpu_limit_shares'],
+          limit_cpu: cpu_shares,
           byte: disk_limit_in_bytes,
           inode: config.instance_disk_inode_limit,
           limit_memory: memory_limit_in_bytes,
@@ -564,6 +619,14 @@ module Dea
       response = container.run_script(:app, script)
       response[:stdout]
     end
+    
+    def instance_zone
+      if (bootstrap.config['placement_properties'])
+        bootstrap.config['placement_properties']['zone']
+      else
+        ""
+      end
+    end
 
     def promise_droplet
       Promise.new do |p|
@@ -588,11 +651,11 @@ module Dea
 
     def stop(&callback)
       p = Promise.new do
-        logger.info 'droplet.stopping'
+        logger.info('droplet.stopping')
 
         promise_exec_hook_script('before_stop').resolve
 
-        promise_state([State::RUNNING, State::STARTING, State::EVACUATING], State::STOPPING).resolve
+        promise_state([State::RUNNING, State::EVACUATING], State::STOPPING).resolve
 
         promise_exec_hook_script('after_stop').resolve
 
@@ -822,6 +885,16 @@ module Dea
 
     def computed_pcpu
       stat_collector.computed_pcpu
+    end
+
+    def cpu_shares
+      calculated_shares = limits['mem'].to_i / config['instance']['memory_to_cpu_share_ratio']
+      if calculated_shares > config['instance']['max_cpu_share_limit']
+        return config['instance']['max_cpu_share_limit']
+      elsif calculated_shares < config['instance']['min_cpu_share_limit']
+        return config['instance']['min_cpu_share_limit']
+      end
+      calculated_shares
     end
 
     def stat_collector

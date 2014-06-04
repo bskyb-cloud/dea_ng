@@ -24,7 +24,7 @@ class StartMessage
   end
 
   def uris
-    (message["uris"] || []).map { |uri| URI(uri) }
+    message["uris"] or []
   end
 
   def prod
@@ -37,6 +37,10 @@ class StartMessage
 
   def cc_partition
     message["cc_partition"]
+  end
+
+  def vcap_application
+    message["vcap_application"] || {}
   end
 
   def limits

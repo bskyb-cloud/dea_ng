@@ -59,7 +59,7 @@ The following is a partial list of the keys that are read from the YAML file:
 ### Running the DEA in the provided Vagrant VM
 
 When contributing to DEA it's useful to run it as a standalone
-component. This test configuration uses [Vagrant >=1.1][vagrant].
+component.
 
 [vagrant]: http://docs.vagrantup.com/v2/installation/index.html
 
@@ -73,55 +73,56 @@ cd dea_ng
 git submodule update --init
 bundle install
 
-# check that your version of vagrant is 1.1 or greater
+```
+
+## Testing
+
+The DEA integration tests run against real Warden, directory, and NATS servers, so they must be run
+in a [Vagrant][vagrant] VM. The `bin` directory contains a helper script that runs the entire DEA test suite:
+
+[vagrant]: http://docs.vagrantup.com/v2/installation/index.html
+
+```bash
+
+# Checkout the repo
+git clone https://github.com/cloudfoundry/dea_ng
+
+# Verify that Vagrant version is at least 1.5
 vagrant --version
 
-# create your test VM
-bundle exec rake test_vm
+# Run test suite in Vagrant vm
+bin/test_in_vm
 ```
-
-Creating the test VM is likely to take a while.
-
-Note that if the rake test_vm step fails and you see an error like
-"undefined method `configure' for Vagrant" or
-"found character that cannot start any token while scanning for the next token"
-it means the version of Vagrant is too old.
-Install Vagrant version 1.1 or higher.
-
-```shell
-# initialize the test VM
-cd ~/workspace/dea_ng
-vagrant up
-
-# shell into the VM
-vagrant ssh
-
-# start warden
-cd /warden
-# pull the latest warden
-sudo git checkout master
-sudo git pull
-cd warden
-bundle
-rvmsudo bundle exec rake warden:start[config/test_vm.yml] 2>&1 > /tmp/warden.log &
-
-# start the DEA's dependencies
-cd /vagrant
-bundle install
-rvmsudo foreman start > /tmp/foreman.log &
-```
-
-To run the tests (unit, integration or all):
-```
-bundle exec rspec spec/unit
-LOCAL_DEA=true bundle exec rspec spec/integration
-```
-
 Note that the integration tests stage and run real applications, which requires an internet connection.
 They take 5-10 minutes to run, depending on your connection speed.
 
+To run tests individually, there is a bit of setup:
+
+```bash
+
+#shell into the VM
+vagrant ssh
+
+# pull the latest warden
+cd /warden
+#start warden
+cd /warden/warden
+sudo bundle install
+sudo bundle exec rake warden:start[config/test_vm.yml] &> /tmp/warden.log &
+
+# start the DEA's dependencies
+cd /vagrant
+sudo bundle install
+sudo bundle exec foreman start &> /tmp/foreman.log &
+
+#To run the tests (unit, integration or all):
+bundle install
+LOCAL_DEA=true bundle exec rspec spec/{spec_file_name}
+```
+
 To watch the internal NATS traffic while the tests run, do this
 in another ssh session:
+
 ```
 nats-sub ">" -s nats://localhost:4222
 ```

@@ -5,11 +5,14 @@ require "pathname"
 require "installer"
 require "procfile"
 require "git"
+require "errors"
 
 module Buildpacks
   class Buildpack
-    attr_accessor :source_directory, :destination_directory, :staging_info_path, :environment_json
-    attr_reader :procfile, :environment, :app_dir, :log_dir, :tmp_dir, :cache_dir, :buildpack_dirs, :staging_timeout, :staging_info_name
+
+    attr_reader :source_directory, :destination_directory, :procfile, :environment,
+                :app_dir, :log_dir, :tmp_dir, :cache_dir, :buildpack_dirs,
+                :staging_timeout, :staging_info_path
 
     def self.validate_arguments!(*args)
       source, dest, env = args
@@ -30,7 +33,7 @@ module Buildpacks
 
     def initialize(config = {})
       @environment = config["environment"]
-      @staging_info_name = config["staging_info_name"]
+      @staging_info_path = config["staging_info_path"]
       @cache_dir = config["cache_dir"]
 
       @staging_timeout = ENV.fetch("STAGING_TIMEOUT", "900").to_i
@@ -48,12 +51,18 @@ module Buildpacks
 
     def stage_application
       Dir.chdir(destination_directory) do
-        create_app_directories
-        copy_source_files
+        begin
+          create_app_directories
+          copy_source_files
 
-        compile_with_timeout(staging_timeout)
+          compile_with_timeout(staging_timeout)
 
-        save_buildpack_info
+          save_buildpack_info
+        rescue StagingError => staging_error
+          save_error_info(staging_error)
+          puts "Staging failed: #{staging_error.message}"
+          exit(false)
+        end
       end
     end
 
@@ -69,19 +78,34 @@ module Buildpacks
     end
 
     def compile_with_timeout(timeout)
-      Timeout.timeout(timeout) do
-        build_pack.compile
+      begin
+        Timeout.timeout(timeout) do
+          build_pack.compile
+        end
+      rescue Timeout::Error
+        Process.kill(15, -Process.getpgid(Process.pid))
       end
     end
 
     def save_buildpack_info
       buildpack_info = {
-        "detected_buildpack"  => build_pack.name,
+        "buildpack_path" => build_pack.path,
+        "detected_buildpack" => build_pack.name,
         "start_command" => start_command
       }
 
-      File.open(File.join(destination_directory, staging_info_name), 'w') do |f|
+      File.open(staging_info_path, 'w') do |f|
         YAML.dump(buildpack_info, f)
+      end
+    end
+
+    def save_error_info(error)
+      error_info = {
+        "type" => error.class.name.split('::').last,
+        "message" => error.message
+      }
+      File.open(staging_info_path, 'w') do |f|
+        YAML.dump({ "staging_error" => error_info }, f)
       end
     end
 
@@ -93,7 +117,9 @@ module Buildpacks
           buildpack_with_key(specified_buildpack_key)
         else
           detected_buildpack = installers.find(&:detect)
-          raise "Unable to detect a supported application type" unless detected_buildpack
+          unless detected_buildpack
+            raise NoAppDetectedError, "An application could not be detected by any available buildpack"
+          end
           detected_buildpack
         end
       end
@@ -126,7 +152,7 @@ module Buildpacks
 
     def buildpack_with_key(buildpack_key)
       detected_buildpack_dir = buildpack_dirs.find do |dir|
-        File.basename(dir) == specified_buildpack_key
+        File.basename(dir) == buildpack_key
       end
       Buildpacks::Installer.new(detected_buildpack_dir, app_dir, cache_dir)
     end
