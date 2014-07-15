@@ -450,14 +450,22 @@ module Dea
                 end
               end
 
+              
               attributes['services'].each do |svc|
-                if svc['credentials'].has_key?('host')
-                  setup_firewall(svc['credentials'], tmplogfile)
+                if svc['credentials']['firewall_allow_rules']
+                  svc['credentials']['firewall_allow_rules'].split(/\s*,\s*/).each do |network|
+                    port=svc['credentials']['port']
+                    tmplogfile.write("Opening up service firewall based on firewall_allow_rules to #{network}:#{svc['credentials']['port']}\n")
+                    container.open_network_destination(network, svc['credentials']['port'].to_i)
+                  end                  
+                else
+                  if svc['credentials'].has_key?('host')
+                    setup_firewall(svc['credentials'], tmplogfile)
+                  end
+                  if svc['credentials'].has_key?(instance_zone) && svc['credentials'][instance_zone].has_key?('host')
+                    setup_firewall(svc['credentials'][instance_zone], tmplogfile)                    
+                  end
                 end
-                if svc['credentials'].has_key?(instance_zone) && svc['credentials'][instance_zone].has_key?('host')
-                  setup_firewall(svc['credentials'][instance_zone], tmplogfile)                    
-                end
-
               end
 
               container.run_script(:app, "rm /tmp/firewallscript")
