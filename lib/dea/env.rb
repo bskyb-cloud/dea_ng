@@ -62,15 +62,23 @@ module Dea
         begin
           services_hash = Hash.new { |h, k| h[k] = [] }
 
+          zone = strategy_env.instance_zone
+            
           message.services.each do |service|
             service_hash = {}
             WHITELIST_SERVICE_KEYS.each do |key|
               service_hash[key] = service[key] if service[key]
             end
 
-            services_hash[service["label"]] << service_hash
-          end
-
+            # If we are passed zoned credentials strip out any other connection points that aren't for this zone.
+            if service_hash['credentials'] and service_hash['credentials'][zone]
+              new_service_hash = Marshal.load(Marshal.dump(service_hash))
+              new_service_hash['credentials'] = service_hash['credentials'][zone]
+              services_hash[service["label"]] << new_service_hash
+            else
+              services_hash[service["label"]] << service_hash
+            end
+          end  
           services_hash
         end
     end

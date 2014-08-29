@@ -2,6 +2,7 @@ require 'tempfile'
 require 'tmpdir'
 require 'yaml'
 require 'shellwords'
+require 'uri'
 
 require 'container/container'
 
@@ -208,7 +209,23 @@ module Dea
         p.deliver
       end
     end
-
+    
+    def promise_open_firewalls
+      Promise.new do |p|
+        begin
+          if staging_config["http_proxy"]
+            location = URI(staging_config["http_proxy"])
+            logger.debug("Opening up firewall to #{location.host} #{location.port}")
+            container.open_network_destination(location.host, location.port)
+          end
+        rescue Exception => e
+          logger.error("Failed to open firewalls #{e.message}")
+          p.fail("Failed to open firewalls #{e.message}")
+        end
+        p.deliver
+      end
+    end
+    
     def promise_stage
       Promise.new do |p|
         script = staging_command
@@ -557,6 +574,7 @@ module Dea
       Promise.run_serially(
         promise_unpack_app,
         promise_unpack_buildpack_cache,
+        promise_open_firewalls,
         promise_stage,
         promise_pack_app,
         promise_copy_out,

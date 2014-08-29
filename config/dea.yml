@@ -40,6 +40,7 @@ staging:
   disk_inode_limit: 200000
   cpu_limit_shares: 512
   max_staging_duration: 900 # 15 minutes
+#  http_proxy: http://proxyuser:proxypass@proxyhost.com:3128
 
 instance:
   disk_inode_limit: 200000

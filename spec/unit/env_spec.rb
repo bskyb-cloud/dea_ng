@@ -17,7 +17,8 @@ describe Dea::Env do
     double("strategy",
            vcap_application: {"fake vcap_application key" => "fake vcap_application value"},
            message: start_message,
-           system_environment_variables: [%w(fake_key fake_value)]
+           system_environment_variables: [%w(fake_key fake_value)],
+           instance_zone: ""
     )
   end
 

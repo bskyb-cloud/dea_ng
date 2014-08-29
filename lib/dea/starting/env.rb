@@ -34,6 +34,11 @@ module Dea
           "state_timestamp" => start_time.to_i,
         }
       end
+      
+      def instance_zone
+        @instance.instance_zone
+      end
+      
     end
   end
 end
