@@ -125,6 +125,29 @@ describe Dea::Instance do
       end
     end
 
+    describe 'egress network rules' do
+      context 'when egress network rules are missing' do
+        let(:start_message_data) { {} }
+
+        its(:egress_network_rules) { should eq([]) }
+      end
+
+      context 'when egress network rules are present' do
+        let (:start_message_data) do
+          {
+            'egress_network_rules' => [
+              { 'protocol' => 'tcp' },
+              { 'port_range' => '80-443' }
+            ]
+          }
+        end
+
+        its(:egress_network_rules) do
+          should match_array([{ 'protocol' => 'tcp' },{ 'port_range' => '80-443' }])
+        end
+      end
+    end
+
     describe 'other attributes' do
       let(:start_message_data) do
         {
@@ -477,7 +500,7 @@ describe Dea::Instance do
         execute_health_check do
           deferrable.fail
         end
-        expect(@emitter.messages[application_id][0]).to eql('Instance (index 2) failed to start accepting connections')
+        expect(@emitter.error_messages[application_id][0]).to eql('Instance (index 2) failed to start accepting connections')
       end
     end
 
@@ -635,7 +658,8 @@ describe Dea::Instance do
                  byte: instance.disk_limit_in_bytes,
                  inode: instance.config.instance_disk_inode_limit,
                  limit_memory: instance.memory_limit_in_bytes,
-                 setup_network: with_network)
+                 setup_inbound_network: with_network,
+                 egress_rules: instance.egress_network_rules)
         expect_start.to_not raise_error
         instance.exit_description.should be_empty
       end
@@ -1238,7 +1262,7 @@ describe Dea::Instance do
         instance.unstub(:promise_state)
       end
 
-      passing_states = [Dea::Instance::State::RUNNING, Dea::Instance::State::EVACUATING]
+      passing_states = [Dea::Instance::State::STOPPING, Dea::Instance::State::RUNNING, Dea::Instance::State::EVACUATING]
 
       passing_states.each do |state|
         it "passes when #{state.inspect}" do
@@ -1354,6 +1378,19 @@ describe Dea::Instance do
         result = instance.promise_link.resolve
         expect(result).to eq(response)
       end
+    end
+  end
+
+  context "when resuming an instance in stopping state" do
+    before do
+      instance.state = Dea::Instance::State::RESUMING
+      instance.setup
+    end
+
+    it "immediately links, and then stops the instance" do
+      expect(instance).to receive(:link).and_call_original
+      expect(instance).to receive(:stop)
+      instance.state = Dea::Instance::State::STOPPING
     end
   end
 

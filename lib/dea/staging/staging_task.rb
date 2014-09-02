@@ -482,7 +482,7 @@ module Dea
     def promise_copy_out_buildpack_cache
       Promise.new do |p|
         logger.info('staging.buildpack-cache.copying-out',
-                    source: workspace.warden_staged_buildpack_cache, destination: workspace.staged_droplet_path)
+                    source: workspace.warden_staged_buildpack_cache, destination: workspace.staged_droplet_dir)
 
         copy_out_request(workspace.warden_staged_buildpack_cache, workspace.staged_droplet_dir)
 
@@ -509,7 +509,7 @@ module Dea
     end
 
     def snapshot_attributes
-      logger.info('snapshot_attributes', properties: staging_message.properties)
+      logger.debug('snapshot_attributes', properties: staging_message.properties)
       {
         'staging_message' => staging_message.to_hash,
         'warden_container_path' => container.path,
@@ -547,7 +547,8 @@ module Dea
         byte: disk_limit_in_bytes,
         inode: disk_inode_limit,
         limit_memory: memory_limit_in_bytes,
-        setup_network: with_network
+        setup_inbound_network: with_network,
+        egress_rules: staging_message.egress_rules,
       )
       promises = [promise_app_download]
       promises << promise_buildpack_cache_download if staging_message.buildpack_cache_download_uri

@@ -29,6 +29,7 @@ module Dea::Starting
       let(:start_timestamp) { Time.now.to_i }
       let(:attributes) do
         {
+          "application_id" => "fake application id",
           "instance_id" => "fake instance id",
         }
       end
@@ -42,6 +43,7 @@ module Dea::Starting
 
       it "has the correct values" do
         expect(vcap_application).to eql(
+          "application_id" => "fake application id",
           "instance_id" => "fake instance id",
           "instance_index" => "fake instance index",
           "host" => "0.0.0.0",

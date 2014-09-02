@@ -7,6 +7,11 @@ $:.unshift(File.expand_path('../buildpacks/lib', SPEC_ROOT))
 require 'bundler'
 Bundler.require
 
+if ENV["CODECLIMATE_REPO_TOKEN"]
+  require "codeclimate-test-reporter"
+  CodeClimate::TestReporter.start
+end
+
 require 'rspec/fire'
 require 'socket'
 require 'tempfile'
@@ -43,11 +48,11 @@ RSpec.configure do |config|
   end
 
   config.before(:all, type: :integration, requires_warden: true) do
-    dea_start if ENV.has_key?('LOCAL_DEA')
+    dea_start
   end
 
   config.after(:all, type: :integration, requires_warden: true) do
-    dea_stop if ENV.has_key?('LOCAL_DEA')
+    dea_stop
   end
 
   config.before(:all, type: :integration) do

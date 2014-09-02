@@ -2,6 +2,7 @@ source 'https://rubygems.org'
 
 gem 'eventmachine'
 gem 'em-http-request'
+gem 'em-synchrony'
 
 gem 'em-warden-client', git: 'https://github.com/cloudfoundry/warden.git'
 gem 'warden-client', git: 'https://github.com/cloudfoundry/warden.git'
@@ -26,6 +27,7 @@ gem 'loggregator_emitter'
 gem 'sys-filesystem'
 
 group :test do
+  gem 'codeclimate-test-reporter', require: false
   gem 'ci_reporter'
   gem 'debugger'
   gem 'foreman'
