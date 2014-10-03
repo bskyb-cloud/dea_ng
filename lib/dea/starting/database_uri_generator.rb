@@ -39,7 +39,7 @@ module Dea
         credentials = nil
         if binding["credentials"].has_key?('uri')
           credentials = binding["credentials"]
-        elsif svc['credentials'].has_key?(instance_zone) && svc['credentials'][instance_zone].has_key?('uri')
+        elsif binding['credentials'].has_key?(instance_zone) && binding['credentials'][instance_zone].has_key?('uri')
           credentials = binding["credentials"][instance_zone]
         end
           
