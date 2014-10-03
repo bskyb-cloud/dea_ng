@@ -85,6 +85,14 @@ module Dea
       )
     end
 
+    def instance_zone
+      if (bootstrap.config['placement_properties'])
+        bootstrap.config['placement_properties']['zone']
+      else
+        ""
+      end
+    end
+    
     def buildpack_manager
       @buildpack_manager ||= BuildpackManager.new(
         workspace.admin_buildpacks_dir,

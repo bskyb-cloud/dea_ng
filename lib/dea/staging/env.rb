@@ -30,6 +30,7 @@ module Dea
       end
       
       def instance_zone
+        @staging_task.instance_zone
       end
     end
   end
