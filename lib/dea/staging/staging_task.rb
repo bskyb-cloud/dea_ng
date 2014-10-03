@@ -86,8 +86,8 @@ module Dea
     end
 
     def instance_zone
-      if (bootstrap.config['placement_properties'])
-        bootstrap.config['placement_properties']['zone']
+      if (@bootstrap.config['placement_properties'])
+        @bootstrap.config['placement_properties']['zone']
       else
         ""
       end
