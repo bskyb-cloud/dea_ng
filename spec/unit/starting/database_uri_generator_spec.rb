@@ -3,7 +3,7 @@ require "dea/starting/database_uri_generator"
 
 describe Dea::DatabaseUriGenerator do
   let(:services_env) { [{"credentials" => {"uri" => "postgres://username:password@host/db"}}] }
-  let(:services) { Dea::DatabaseUriGenerator.new(services_env) }
+  let(:services) { Dea::DatabaseUriGenerator.new(services_env, "") }
 
   describe "#database_uri" do
     subject(:database_uri) { services.database_uri }

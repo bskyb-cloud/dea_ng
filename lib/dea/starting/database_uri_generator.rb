@@ -30,10 +30,12 @@ module Dea
     def bound_relational_valid_databases
       @bound_relational_valid_databases ||= @services.inject([]) do |collection, binding|
         credentials = nil
-        if binding["credentials"].has_key?('uri')
-          credentials = binding["credentials"]
-        elsif binding['credentials'].has_key?(@zone) && binding['credentials'][@zone].has_key?('uri')
-          credentials = binding["credentials"][@zone]
+        if binding["credentials"]
+          if binding["credentials"].has_key?('uri')
+            credentials = binding["credentials"]
+          elsif binding['credentials'].has_key?(@zone) && binding['credentials'][@zone].has_key?('uri')
+            credentials = binding["credentials"][@zone]
+          end
         end
           
         if credentials && credentials["uri"]
