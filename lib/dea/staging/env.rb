@@ -1,5 +1,5 @@
 # coding: UTF-8
-require 'URI'
+require 'uri'
 
 module Dea
   module Staging
@@ -30,7 +30,7 @@ module Dea
           
           if uri.userinfo
             username, password = uri.userinfo.split(':')
-            java_opts = "#{java_opts} -Dhttp.proxyHost=#{uri.host} -Dhttp.proxyPort=#{uri.port}"
+            java_opts = "#{java_opts} -Dhttp.proxyUser=#{username} -Dhttp.proxyPassword=#{password}"
           end
           
           array << ["JAVA_OPTS", java_opts]
