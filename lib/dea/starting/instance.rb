@@ -6,6 +6,7 @@ require 'steno/core_ext'
 require 'vcap/common'
 require 'yaml'
 require 'tempfile'
+require 'resolv'
 
 require 'dea/env'
 require 'dea/health_check/port_open'
@@ -422,10 +423,10 @@ module Dea
       end
     end
 
-    def setup_firewall(credentials, tmplogfile)
+    def setup_firewall(credentials)
         credentials['host'].split(/\s*,\s*/).each do |host|
-            tmplogfile.write("Opening up service firewall to #{host}:#{credentials['port']}\n")
-            container.open_network_destination(host, credentials['port'].to_i)
+            Dea::Loggregator.emit(application_id, "Opening up service firewall to #{host}:#{credentials['port']}")
+            container.open_network_destination(Resolv.getaddress(host), credentials['port'].to_i)
         end
     end
 
@@ -433,7 +434,6 @@ module Dea
       Promise.new do |p|
         if bootstrap.config['firewalls']
           if bootstrap.config['firewalls']['script']
-            tmplogfile = Tempfile.new('firewalllog')
             begin
               args = bootstrap.config['firewalls']['args']
               logger.debug("Adding in firewalls")
@@ -445,46 +445,43 @@ module Dea
               if response[:stdout]
                 response[:stdout].split(/\n/).each do |line|
                   host, port = line.split(/:/)
-                  tmplogfile.write("Opening up user requested firewall to #{host}:#{port}\n")
-                  container.open_network_destination(host, port.to_i)
+                  Dea::Loggregator.emit(application_id, "Opening up user requested firewall to #{host}:#{port}")
+                  container.open_network_destination(Resolv.getaddress(host), port.to_i)
                 end
               end
 
-              
               attributes['services'].each do |svc|
                 if svc['credentials']['firewall_allow_rules']
                   svc['credentials']['firewall_allow_rules'].split(/\s*,\s*/).each do |network|
                     port=svc['credentials']['port']
-                    tmplogfile.write("Opening up service firewall based on firewall_allow_rules to #{network}:#{svc['credentials']['port']}\n")
-                    container.open_network_destination(network, svc['credentials']['port'].to_i)
-                  end                  
+                    Dea::Loggregator.emit(application_id, "Opening up service firewall based on firewall_allow_rules to #{network}:#{svc['credentials']['port']}")
+                    container.open_network_destination(Resolv.getaddress(network), svc['credentials']['port'].to_i)
+                  end
                 else
                   if svc['credentials'].has_key?('host')
-                    setup_firewall(svc['credentials'], tmplogfile)
+                    setup_firewall(svc['credentials'])
                   end
                   if svc['credentials'].has_key?(instance_zone) && svc['credentials'][instance_zone].has_key?('host')
-                    setup_firewall(svc['credentials'][instance_zone], tmplogfile)                    
+                    setup_firewall(svc['credentials'][instance_zone])
                   end
                 end
               end
 
               container.run_script(:app, "rm /tmp/firewallscript")
+              p.deliver
             rescue Container::WardenError => e
               msg = "Application of container firewalls failed. #{e.to_s}\nSTDOUT:\n#{e.result[:stdout]}\nSTDERR:\n#{e.result[:stderr]}"
               logger.warn("Application of container firewalls failed: #{msg}")
-              tmplogfile.write("#{Time.now.to_s}:\n#{msg}")
+              Dea::Loggregator.emit_error(application_id, "#{Time.now.to_s}:\n#{msg}")
               p.fail(UserFacingError.new(msg))
             rescue Exception => e
               msg = "Application of container firewalls failed. #{e.to_s}"
               logger.warn("Application of container firewalls failed: #{msg}")
-              tmplogfile.write("#{Time.now.to_s}:\n#{msg}")
-              raise e
+              Dea::Loggregator.emit_error(application_id, "#{Time.now.to_s}:\n#{msg}")
+              p.fail(UserFacingError.new(msg))
             end
-            tmplogfile.close
-            container.copy_in_file(tmplogfile.path, "/home/vcap/logs/firewalls.log")
           end
         end
-        p.deliver
       end
     end
 
