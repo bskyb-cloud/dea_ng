@@ -3,6 +3,7 @@ require 'tmpdir'
 require 'yaml'
 require 'shellwords'
 require 'uri'
+require 'resolv'
 
 require 'container/container'
 
@@ -215,8 +216,8 @@ module Dea
         begin
           if staging_config["http_proxy"]
             location = URI(staging_config["http_proxy"])
-            logger.debug("Opening up firewall to #{location.host} #{location.port}")
-            container.open_network_destination(location.host, location.port)
+            logger.debug("Opening up firewall to #{Resolv.getaddress(location.host)} #{location.port}")
+            container.open_network_destination(Resolv.getaddress(location.host), location.port)
           end
         rescue Exception => e
           logger.error("Failed to open firewalls #{e.message}")
