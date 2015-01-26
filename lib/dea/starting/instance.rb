@@ -282,6 +282,7 @@ module Dea
     def setup
       setup_stat_collector
       setup_link
+      setup_resume_stopping
       setup_crash_handler
     end
 
@@ -374,6 +375,10 @@ module Dea
 
     def to_s
       'Instance(id=%s, idx=%s, app_id=%s)' % [instance_id.slice(0, 4), instance_index, application_id]
+    end
+
+    def egress_network_rules
+      attributes['egress_network_rules'] || []
     end
 
     def promise_state(from, to = nil)
@@ -598,7 +603,8 @@ module Dea
           byte: disk_limit_in_bytes,
           inode: config.instance_disk_inode_limit,
           limit_memory: memory_limit_in_bytes,
-          setup_network: with_network)
+          setup_inbound_network: with_network,
+          egress_rules: egress_network_rules)
 
         attributes['warden_handle'] = container.handle
 
@@ -660,7 +666,7 @@ module Dea
 
         promise_exec_hook_script('before_stop').resolve
 
-        promise_state([State::RUNNING, State::EVACUATING], State::STOPPING).resolve
+        promise_state([State::STOPPING, State::RUNNING, State::EVACUATING], State::STOPPING).resolve
 
         promise_exec_hook_script('after_stop').resolve
 
@@ -753,6 +759,14 @@ module Dea
       end
     end
 
+    def setup_resume_stopping
+      on(Transition.new(:resuming, :stopping)) do
+        link do
+          stop
+        end
+      end
+    end
+
     def promise_link
       Promise.new do |p|
         p.deliver(container.link(attributes['warden_job_id']))
@@ -817,7 +831,7 @@ module Dea
           hc.callback { p.deliver(true) }
 
           hc.errback do
-            Dea::Loggregator.emit(application_id, "Instance (index #{instance_index}) failed to start accepting connections")
+            Dea::Loggregator.emit_error(application_id, "Instance (index #{instance_index}) failed to start accepting connections")
             p.deliver(false)
           end
 
@@ -949,6 +963,7 @@ module Dea
         'warden_job_id' => attributes['warden_job_id'],
         'warden_container_path' => container.path,
         'warden_host_ip' => container.host_ip,
+        'warden_container_ip' => container.container_ip,
         'instance_host_port' => container.network_ports['host_port'],
         'instance_container_port' => container.network_ports['container_port'],
           

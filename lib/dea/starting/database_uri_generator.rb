@@ -8,42 +8,49 @@ module Dea
       'informix' => 'ibmdb'
     }.freeze
 
-    def initialize(services)
+    def initialize(services, zone)
       @services = Array(services).compact || []
+      @zone = zone
     end
 
     def database_uri
-      convert_scheme_to_rails_style_adapter(bound_database_uri).to_s if bound_database_uri
+      bound_database_uri
     end
 
     private
 
     def bound_database_uri
       if bound_relational_valid_databases.any?
-        bound_relational_valid_databases.first[:uri]
+        bound_relational_valid_databases.first
       else
         nil
       end
     end
-
+    
     def bound_relational_valid_databases
       @bound_relational_valid_databases ||= @services.inject([]) do |collection, binding|
-        begin
-          credentials = binding["credentials"]
-          if credentials && credentials["uri"]
-            uri = URI.parse(binding["credentials"]["uri"])
-            collection << {uri: uri, name: binding["name"]} if VALID_DB_TYPES.include?(uri.scheme)
+        credentials = nil
+        if binding["credentials"]
+          if binding["credentials"].has_key?('uri')
+            credentials = binding["credentials"]
+          elsif binding['credentials'].has_key?(@zone) && binding['credentials'][@zone].has_key?('uri')
+            credentials = binding["credentials"][@zone]
           end
-        rescue URI::InvalidURIError => e
-          raise URI::InvalidURIError, "Invalid database uri: #{binding["credentials"]["uri"].gsub(/\/\/.+@/, '//USER_NAME_PASS@')}"
+        end
+          
+        if credentials && credentials["uri"]
+          (scheme, rest) = credentials["uri"].split(":", 2)
+          if scheme && rest
+            collection << "#{convert_scheme_to_rails_style_adapter(scheme)}:#{rest}" if VALID_DB_TYPES.include?(scheme)
+          end
         end
         collection
       end
     end
 
-    def convert_scheme_to_rails_style_adapter(uri)
-      uri.scheme = RAILS_STYLE_DATABASE_TO_ADAPTER_MAPPING[uri.scheme] if RAILS_STYLE_DATABASE_TO_ADAPTER_MAPPING[uri.scheme]
-      uri
+    def convert_scheme_to_rails_style_adapter(scheme)
+      return RAILS_STYLE_DATABASE_TO_ADAPTER_MAPPING[scheme] if RAILS_STYLE_DATABASE_TO_ADAPTER_MAPPING[scheme]
+      scheme
     end
   end
 end

@@ -3,7 +3,7 @@ require "dea/starting/database_uri_generator"
 
 describe Dea::DatabaseUriGenerator do
   let(:services_env) { [{"credentials" => {"uri" => "postgres://username:password@host/db"}}] }
-  let(:services) { Dea::DatabaseUriGenerator.new(services_env) }
+  let(:services) { Dea::DatabaseUriGenerator.new(services_env, "") }
 
   describe "#database_uri" do
     subject(:database_uri) { services.database_uri }
@@ -54,8 +54,12 @@ describe Dea::DatabaseUriGenerator do
       context "and the uri is invalid" do
         let(:services_env) { [{"credentials" => {"uri" => "postgresql:///inva\\:password@host/db"}}] }
 
-        it "raises an exception" do
-          expect { database_uri }.to raise_exception(URI::InvalidURIError, "Invalid database uri: postgresql://USER_NAME_PASS@host/db")
+        it "does not raise an exception" do
+          expect { database_uri }.not_to raise_exception
+        end
+
+        it "still sets the url" do
+          expect(subject).to eq "postgres:///inva\\:password@host/db"
         end
       end
     end

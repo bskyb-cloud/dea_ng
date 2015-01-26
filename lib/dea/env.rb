@@ -52,7 +52,7 @@ module Dea
         ["VCAP_SERVICES",     Yajl::Encoder.encode(vcap_services)],
         ["MEMORY_LIMIT", "#{message.mem_limit}m"]
       ]
-      env << ["DATABASE_URL", DatabaseUriGenerator.new(message.services).database_uri] if message.services.any?
+      env << ["DATABASE_URL", DatabaseUriGenerator.new(message.services, strategy_env.instance_zone).database_uri] if message.services.any?
 
       env + strategy_env.system_environment_variables
     end
