@@ -66,6 +66,10 @@ class StagingMessage
     @message["egress_network_rules"] || []
   end
 
+  def stack
+    @message['stack']
+  end
+
   private
 
   def logger
