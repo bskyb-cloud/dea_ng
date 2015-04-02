@@ -490,6 +490,47 @@ module Dea
       end
     end
 
+    def promise_sharedfs
+      Promise.new do |p|
+        begin
+
+        # Its probably a better to do automounting in a different way that isn't hardcoded to the sharedfs service (using sshfs).
+        # Maybe allow the mount instructions to be provided in the credentials.
+        # Sadly I've run out of time to make this better.
+
+        index=0
+
+        attributes['services'].each do |svc|
+          if svc['label'] == 'sharedfs'
+            label=(index==0?"":index)
+            credentials=svc['credentials']
+
+            script = []
+            script << "mkdir -p /home/vcap/data#{label}"
+            script << "echo -e \"#{credentials['identity']}\" > /home/vcap/.identity#{label}"
+            script << "chmod 600 /home/vcap/.identity#{label}"
+            script << "sshfs -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o IdentityFile=/home/vcap/.identity#{label} -o cache_timeout=2 -o reconnect -o ConnectTimeout=5 -o TCPKeepAlive=yes -o ServerAliveInterval=5 -o umask=077 -o uid=$(id -u) -o gid=$(id -g) #{credentials['username']}@#{credentials['host']}:data /home/vcap/data#{label}"
+            script << "rm /home/vcap/.identity#{label}"
+            container.run_script(:app, script.join(" && "))
+            index=index+1
+          end
+        end
+
+        p.deliver
+        rescue Container::WardenError => e
+          msg = "Application of container sharedfs failed. #{e.to_s}\nSTDOUT:\n#{e.result[:stdout]}\nSTDERR:\n#{e.result[:stderr]}"
+          logger.warn("Application of container sharedfs failed: #{msg}")
+          Dea::Loggregator.emit_error(application_id, "#{Time.now.to_s}:\n#{msg}")
+          p.fail(UserFacingError.new(msg))
+        rescue Exception => e
+          msg = "Application of container sharedfs failed. #{e.to_s}"
+          logger.warn("Application of container sharedfs failed: #{msg}")
+          Dea::Loggregator.emit_error(application_id, "#{Time.now.to_s}:\n#{msg}")
+          p.fail(UserFacingError.new(msg))
+        end
+      end
+    end
+
     def promise_start
       Promise.new do |p|
         env = Env.new(StartMessage.new(@raw_attributes), self)
@@ -558,6 +599,7 @@ module Dea
         Promise.run_serially(
           promise_extract_droplet,
           promise_firewalls,
+          promise_sharedfs,
           promise_exec_hook_script('before_start'),
           promise_start
         )
