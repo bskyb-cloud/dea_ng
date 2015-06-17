@@ -50,7 +50,7 @@ class Upload
 
   def poll(polling_destination, &upload_callback)
     logger.debug("em-upload.polling", polling_destination: polling_destination)
-    http = EM::HttpRequest.new(polling_destination).get
+    http = EM::HttpRequest.new(polling_destination, :connect_timeout => 30, :inactivity_timeout => 60).get
     http.errback do
       logger.warn("em-upload.polling.handle_error")
       handle_error(http, polling_destination, upload_callback)
