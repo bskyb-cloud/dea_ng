@@ -53,8 +53,24 @@ module Dea
         ["MEMORY_LIMIT", "#{message.mem_limit}m"]
       ]
       env << ["DATABASE_URL", DatabaseUriGenerator.new(message.services, strategy_env.instance_zone).database_uri] if message.services.any?
-
+      if has_web_proxy?
+        env = env + web_proxy_env
+      end
       env + strategy_env.system_environment_variables
+    end
+
+    def web_proxy_env
+      credentials = vcap_services.values.detect{|srv| srv.first['label'] == 'proxy'}.first['credentials']
+      [
+          ["WEB_PROXY_HOST",  credentials["host"]],
+          ["WEB_PROXY_PORT",  credentials["port"]],
+          ["WEB_PROXY_USER",  credentials["username"]],
+          ["WEB_PROXY_PASS",  credentials["password"]]
+      ]
+    end
+
+    def has_web_proxy?
+      vcap_services.values.detect{|srv| srv.first['label'] == 'proxy'}
     end
 
     def vcap_services

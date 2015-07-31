@@ -151,6 +151,42 @@ describe Dea::Env do
         exported_system_vars.should_not have_key("DATABASE_URL")
       end
     end
+
+    context "web proxy" do
+
+      context "when proxy serivce is not bound" do
+        it "web proxy vars are not present" do
+          exported_system_vars.should_not have_key("WEB_PROXY_HOST")
+          exported_system_vars.should_not have_key("WEB_PROXY_PORT")
+          exported_system_vars.should_not have_key("WEB_PROXY_USER")
+          exported_system_vars.should_not have_key("WEB_PROXY_PASS")
+        end
+      end
+
+      context "when proxy serivce is bound" do
+
+        let(:service) do
+          {
+              "credentials" => {"host" => "proxycluster.com", "port" => 3128, "username" => "user", "password" => "pass", "http_proxy" => "http://user:pass@proxycluster.com:3128"},
+              "label" => "proxy",
+              "plan" => "default",
+              "plan_option" => "plan_option",
+              "name" => "proxy-shop",
+              "tags" => {"key" => "value"},
+              "syslog_drain_url" => "syslog://drain-url.example.com:514",
+              "blacklisted" => "blacklisted"
+          }
+        end
+
+        it "web proxy vars are present" do
+          exported_system_vars["WEB_PROXY_HOST"].should eq("proxycluster.com")
+          exported_system_vars["WEB_PROXY_PORT"].should eq(3128)
+          exported_system_vars["WEB_PROXY_USER"].should eq("user")
+          exported_system_vars["WEB_PROXY_PASS"].should eq("pass")
+        end
+      end
+
+    end
   end
 
   describe "#exported_user_environment_variables" do
