@@ -13,15 +13,37 @@ module Dea::Staging
     subject(:env) {Env.new(staging_message, task)}
 
     describe "system environment variables" do
-      subject(:system_environment_variables) { env.system_environment_variables }
 
       it "has the correct values" do
-        expect(system_environment_variables).to eql([
+        expect(env.system_environment_variables).to eql([
                                                       %w(BUILDPACK_CACHE fake_buildpack_cache),
                                                       %w(STAGING_TIMEOUT fake_timeout),
                                                       %w(MEMORY_LIMIT fake_mem_limitm),
                                                     ])
       end
+
+      context 'staging proxy details' do
+
+        it 'throws error if userinfo is not supplied' do
+          staging_config['http_proxy'] = 'http://hem-cs-proxycluster-m-vip-001.stage-paas.bskyb.com:3128'
+
+          expect{env.system_environment_variables}.to raise_error(RuntimeError)
+        end
+
+        it 'sets JAVA_OPTS' do
+          staging_config['http_proxy'] = 'http://user:password@hem-cs-proxycluster-m-vip-001.stage-paas.bskyb.com:3128'
+
+          expect(env.system_environment_variables).to include ['JAVA_OPTS', '-Dhttp.proxyHost=hem-cs-proxycluster-m-vip-001.stage-paas.bskyb.com -Dhttp.proxyPort=3128 -Dhttp.proxyUser=user -Dhttp.proxyPassword=password']
+        end
+
+        it 'sets SBT_OPTS' do
+          staging_config['http_proxy'] = 'http://user:password@hem-cs-proxycluster-m-vip-001.stage-paas.bskyb.com:3128'
+
+          expect(env.system_environment_variables).to include ['SBT_OPTS', '-J-Dhttp.proxyHost=hem-cs-proxycluster-m-vip-001.stage-paas.bskyb.com -J-Dhttp.proxyPort=3128 -J-Dhttp.proxyUser=user -J-Dhttp.proxyPassword=password']
+        end
+
+      end
+
     end
 
     describe "vcap_application" do
