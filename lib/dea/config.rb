@@ -53,7 +53,7 @@ module Dea
             "file_api_port" => Integer,
           },
 
-          "stacks" => [String],
+          "stacks" => [Hash],
           "placement_properties" => {
             "zone" => String
           },
