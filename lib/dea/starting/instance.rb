@@ -415,6 +415,7 @@ module Dea
         script << 'ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa'
         script << 'cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys'
         script << 'chown -R vcap:vcap /home/vcap/.ssh'
+	script << 'chown -R vcap:vcap /home/vcap'
 
         container.run_script(:app, script.join(" && "), true)
         
