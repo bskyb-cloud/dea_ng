@@ -405,6 +405,8 @@ module Dea
         script << 'mkdir -p home/vcap/app'
         script << 'chown vcap:vcap home/vcap/app'
         script << 'ln -s home/vcap/app /app'
+        script << 'rm -fr /etc/ssh/ssh_host_dsa_key'
+        script << 'rm -fr /etc/ssh/ssh_host_rsa_key'
         script << 'ssh-keygen -t dsa -N "" -f /etc/ssh/ssh_host_dsa_key'
         script << 'ssh-keygen -t rsa -N "" -f /etc/ssh/ssh_host_rsa_key'
         script << 'mkdir -p /var/run/sshd'
