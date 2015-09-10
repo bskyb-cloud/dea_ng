@@ -98,7 +98,7 @@ describe Dea::Responders::StagingLocator do
 
   describe "#advertise" do
     it "publishes 'staging.advertise' message" do
-      config["stacks"] = ["lucid64"]
+      config["stacks"] = ["name" => "lucid64"]
       resource_manager.stub(:remaining_memory => 45678)
       resource_manager.stub(:remaining_disk => 12345)
 
