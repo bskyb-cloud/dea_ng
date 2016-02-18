@@ -27,7 +27,7 @@ class Download
     destination_file.binmode
     sha1 = Digest::SHA1.new
 
-    http = EM::HttpRequest.new(source_uri, :inactivity_timeout => 30).get
+    http = EM::HttpRequest.new(source_uri, :connect_timeout => 30, :inactivity_timeout => 60).get
 
     http.stream do |chunk|
       destination_file << chunk

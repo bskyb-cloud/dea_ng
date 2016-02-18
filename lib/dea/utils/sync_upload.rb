@@ -21,7 +21,7 @@ class SyncUpload
     logger.info("em-upload.begin", destination: @destination)
     head = {EM::HttpClient::MULTIPART_HACK => {name: "upload[droplet]", filename: File.basename(@source)}}
 
-    http = EM::HttpRequest.new(@destination, inactivity_timeout: INACTIVITY_TIMEOUT).post(
+    http = EM::HttpRequest.new(@destination, :connect_timeout => 30, inactivity_timeout: INACTIVITY_TIMEOUT).post(
         head: head, file: @source, query: {async: "true"}
     )
 
