@@ -46,12 +46,14 @@ describe Upload do
 
     it "requests an async upload of the droplet" do
       stub_request(:post, "http://127.0.0.1:12345/").with(query: {async: "true"})
-      subject.upload! {}
+      ran = false
+      subject.upload! { ran = true }
+      expect(ran).to be_false
       done
     end
 
     it "creates the correct multipart request (with a high inactivity timeout which should be removed when everything is aysnc)" do
-      expect(EM::HttpRequest).to receive(:new).with(to_uri, inactivity_timeout: 300).and_return(http)
+      expect(EM::HttpRequest).to receive(:new).with(to_uri, :connect_timeout=>30, inactivity_timeout: 300).and_return(http)
       expect(http).to receive(:post).with(
                           head: {'x-cf-multipart' => {name: "upload[droplet]", filename: anything}},
                           file: file_to_upload.path,
@@ -168,7 +170,7 @@ describe Upload do
 
           it "should poll the cloud controller until failed and returns failure information" do
             subject.upload! do |error|
-              expect(error.message).to include "Error uploading: (Polling status:"
+              expect(error.message).to include "Error uploading: (Staging upload failed.)"
               done
             end
           end
@@ -225,7 +227,7 @@ describe Upload do
 
           it "should poll the cloud controller until errback-ed and returns failure information" do
             subject.upload! do |error|
-              expect(error.message).to include "Error uploading: (Polling status:"
+              expect(error.message).to include "Error uploading: (Polling failed - status 500)"
               done
             end
           end
@@ -248,9 +250,33 @@ describe Upload do
           it "should poll the cloud controller until failed and returns failure information" do
             subject.upload! do |error|
               expect(error.message).not_to be_nil
-              expect(error.message).to eq "Error uploading: (Polling status: 400 - Client Error)"
+              expect(error.message).to eq "Error uploading: (Polling failed - status 400)"
               done
             end
+          end
+        end
+      end
+
+      describe "#handle_error" do
+        context "when a Errno::ETIMEDOUT occured" do
+          it "does not call the upload callbback" do
+            http = double(:http, error: Errno::ETIMEDOUT).as_null_object
+            upload_callback = double(:upload_callback)
+            subject.instance_variable_set(:@remaining_polling_time, 120)
+            expect(upload_callback).not_to receive(:call)
+            expect(subject).to receive(:retry_if_time_left)
+            subject.handle_error(http, "", upload_callback)
+            done
+          end
+        end
+
+        context "when another type of error ocurred" do
+          it "calls the upload callback with that error" do
+            http = double(:http).as_null_object
+            upload_callback = double(:upload_callback)
+            expect(upload_callback).to receive(:call).with(kind_of(UploadError))
+            subject.handle_error(http, "", upload_callback)
+            done
           end
         end
       end
@@ -260,7 +286,7 @@ describe Upload do
       it "calls the block with the exception" do
         subject.upload! do |error|
           expect(error).to be_a(UploadError)
-          expect(error.message).to include "Error uploading: (Upload status:"
+          expect(error.message).to include "Error uploading: (Upload failed"
           done
         end
       end
@@ -276,7 +302,7 @@ describe Upload do
       it "calls the block with the exception" do
         subject.upload! do |error|
           expect(error).to be_a(UploadError)
-          expect(error.message).to match %r{Error uploading: \(Upload status: 500 - }
+          expect(error.message).to match %r{Error uploading: \(Upload failed - status 500}
           done
         end
       end

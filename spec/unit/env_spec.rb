@@ -45,7 +45,15 @@ describe Dea::Env do
 
   let(:instance) do
     attributes = {"instance_id" => VCAP.secure_uuid}
-    double(:instance, attributes: attributes, instance_container_port: 4567, state_starting_timestamp: Time.now.to_f, instance_zone: '')
+    instance_double(
+      "Dea::Instance",
+      attributes: attributes,
+      instance_container_port: 4567,
+      state_starting_timestamp: Time.now.to_f,
+      instance_zone: '',
+      instance_host_port: "fake_external_port",
+      bootstrap: double(:bootstrap, local_ip: "fake_ip")
+    )
   end
 
   let(:start_message) do

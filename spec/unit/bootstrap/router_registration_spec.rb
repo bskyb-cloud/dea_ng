@@ -11,10 +11,9 @@ describe Dea do
     bootstrap.unstub(:setup_directory_server_v2)
     bootstrap.unstub(:directory_server_v2)
     bootstrap.unstub(:register_directory_server_v2)
-    bootstrap.unstub(:greet_router)
   end
 
-  it "should publish two messages on 'router.register' upon receipt of a message on 'router.start'" do
+  it "registers the directory server and instances on a time interval" do
     instances = []
     responses = []
 
@@ -23,9 +22,9 @@ describe Dea do
       done
     end
 
-    with_event_machine(:timeout => 1) do
+    with_event_machine do
+      allow(EM).to receive(:add_periodic_timer)
       bootstrap.setup
-      bootstrap.start
 
       states = [Dea::Instance::State::RUNNING,
                 Dea::Instance::State::STOPPED,
@@ -40,7 +39,10 @@ describe Dea do
         instances << instance
       end
 
-      nats_mock.publish("router.start")
+      bootstrap.start
+      expect(EM).to have_received(:add_periodic_timer).with(20)
+
+      done
     end
 
     expected_0 = {
@@ -49,7 +51,7 @@ describe Dea do
       "uris" => instances[0].application_uris,
       "host" => bootstrap.local_ip,
       "port" => instances[0].instance_host_port,
-      "tags" => { "component" => "dea-#{bootstrap.uuid}" },
+      "tags" => { "component" => "dea-#{bootstrap.config['index']}" },
       "private_instance_id" => instances[0].private_instance_id,
     }
 
@@ -57,65 +59,12 @@ describe Dea do
       "host" => bootstrap.local_ip,
       "port" => bootstrap.config["directory_server"]["v2_port"],
       "uris" => ["#{bootstrap.directory_server_v2.uuid}.#{bootstrap.config["domain"]}"],
-      "tags" => { "component" => "directory-server-#{bootstrap.uuid}" },
+      "tags" => { "component" => "directory-server-#{bootstrap.config['index']}" },
     }
 
     # The directory server is registered at startup, thus we expect two
     # registrations to arrive
-    responses.should =~ [expected_0, expected_1, expected_1]
-  end
-
-  it "sets up a periodic timer with the requested interval" do
-    with_event_machine do
-      bootstrap.setup
-      bootstrap.start
-
-      EM.should_receive(:add_periodic_timer).with(13)
-      nats_mock.publish("router.start", {:minimumRegisterIntervalInSeconds => 13})
-
-      done
-    end
-  end
-
-  it "does not set up a periodic timer when no interval is given" do
-    with_event_machine do
-      bootstrap.setup
-      bootstrap.start
-
-      EM.should_not_receive(:add_periodic_timer)
-      nats_mock.publish("router.start", {})
-
-      done
-    end
-  end
-
-  it "clears previous timer and creates a new one if a timer already exists" do
-    with_event_machine do
-      bootstrap.setup
-      bootstrap.start
-
-      EM.should_receive(:add_periodic_timer).with(13).and_return(:foobar)
-      nats_mock.publish("router.start", {:minimumRegisterIntervalInSeconds => 13})
-
-      EM.should_receive(:cancel_timer).with(:foobar)
-      EM.should_receive(:add_periodic_timer).with(14)
-      nats_mock.publish("router.start", {:minimumRegisterIntervalInSeconds => 14})
-
-      done
-    end
-  end
-
-  it "sends router.greet on startup and registers a timer" do
-    with_event_machine do
-      bootstrap.setup
-      bootstrap.start
-
-      EM.should_receive(:add_periodic_timer).with(13)
-
-      nats_mock.respond_to_channel("router.greet", :minimumRegisterIntervalInSeconds => 13)
-
-      done
-    end
+    expect(responses).to match_array([expected_0, expected_1])
   end
 
   describe "router.register message" do
@@ -138,6 +87,28 @@ describe Dea do
       nats.should_receive(:publish).with(anything, hash_including("tags" => hash_including("component" => "dea-1")))
       client = Dea::RouterClient.new(bs)
       client.register_instance(instance)
+    end
+  end
+
+  describe "handle_router_start" do
+    it "registers its routes" do
+      bootstrap.setup
+
+      instance = create_and_register_instance(bootstrap,
+        "application_id" => "app_id",
+        "application_uris" => ["iamaroute"])
+      instance.state = Dea::Instance::State::RUNNING
+
+      allow(bootstrap.router_client).to receive(:register_instance)
+      allow(bootstrap.router_client).to receive(:register_directory_server)
+
+      bootstrap.handle_router_start
+
+      expect(bootstrap.router_client).to have_received(:register_instance).with(instance)
+
+      domain = "#{bootstrap.directory_server_v2.uuid}.#{bootstrap.config["domain"]}"
+      port = bootstrap.config["directory_server"]["v2_port"]
+      expect(bootstrap.router_client).to have_received(:register_directory_server).with(port, domain)
     end
   end
 

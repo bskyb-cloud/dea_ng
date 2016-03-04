@@ -9,7 +9,17 @@ describe Dea::Instance do
     double('snapshot', :save => {})
   end
   let(:bootstrap) do
-    double('bootstrap', :config => config, :snapshot => snapshot)
+    double('bootstrap', :config => config, :snapshot => snapshot, local_ip: '1.1.1.1')
+  end
+  let(:rootfs) { '/path/to/rootfs' }
+  let(:stack_name) { 'my-stack' }
+  let(:stacks) do
+    [
+      {
+        'name' => stack_name,
+        'package_path' => rootfs,
+      }
+    ]
   end
   let(:rootfs) { '/path/to/rootfs' }
   let(:stack_name) { 'my-stack' }
@@ -351,6 +361,20 @@ describe Dea::Instance do
         end
       end
     end
+
+    describe 'when started' do
+      [
+          Dea::Instance::State::EVACUATING,
+      ].each do |state|
+        it "does not stop when the instance moves to the #{state.inspect} state" do
+          instance.stat_collector.should_not_receive(:stop)
+          instance.state = Dea::Instance::State::RUNNING
+
+          instance.state = state
+        end
+      end
+    end
+
   end
 
   describe 'attributes_and_stats from stat collector' do
@@ -367,6 +391,11 @@ describe Dea::Instance do
     it 'returns the computed_pcpu stat in the attributes_and_stats hash' do
       instance.stat_collector.stub(:computed_pcpu).and_return(0.123)
       instance.attributes_and_stats.should include('computed_pcpu' => 0.123)
+    end
+
+    it 'does not include protected attributes' do
+      expect(instance.attributes_and_stats.keys).to_not include('environment')
+      expect(instance.attributes_and_stats.keys).to_not include('services')
     end
   end
 
@@ -498,18 +527,12 @@ describe Dea::Instance do
         result.should be_true
       end
 
-      it 'fails when the port is not open' do
+      it 'fails when the port is not open and logs an error message' do
         result = execute_health_check do
           deferrable.fail
         end
 
         result.should be_false
-      end
-
-      it 'logs a message to loggregator when the port is not open' do
-        execute_health_check do
-          deferrable.fail
-        end
         expect(@emitter.error_messages[application_id][0]).to eql('Instance (index 2) failed to start accepting connections')
       end
     end
@@ -905,9 +928,9 @@ describe Dea::Instance do
         instance.exit_description.should be_empty
       end
 
-      it 'should symlink the app dir' do
+      it 'should remove existing and then symlink the app dir' do
         instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{ln -s home/vcap/app /app}
+          script.should =~ %r{rm -rf /app && ln -s home/vcap/app /app}
         end
 
         expect_start.to_not raise_error
@@ -1282,7 +1305,8 @@ describe Dea::Instance do
         instance.unstub(:promise_state)
       end
 
-      passing_states = [Dea::Instance::State::STOPPING, Dea::Instance::State::RUNNING, Dea::Instance::State::EVACUATING]
+      passing_states = [Dea::Instance::State::BORN, Dea::Instance::State::STOPPING, Dea::Instance::State::RUNNING,
+        Dea::Instance::State::EVACUATING, Dea::Instance::State::STARTING, Dea::Instance::State::STOPPED]
 
       passing_states.each do |state|
         it "passes when #{state.inspect}" do
@@ -1316,6 +1340,7 @@ describe Dea::Instance do
         before do
           Dea::Env.stub(:new).with(instance).and_return(env)
           bootstrap.stub(:config).and_return('hooks' => {hook => fixture("hooks/#{hook}")})
+          instance.state = Dea::Instance::State::RUNNING
         end
 
         it "executes the #{hook} script file" do
@@ -1531,10 +1556,6 @@ describe Dea::Instance do
   end
 
   describe 'destroy' do
-    subject(:instance) do
-      Dea::Instance.new(bootstrap, valid_instance_attributes)
-    end
-
     let(:connection) { double('connection', :promise_call => delivering_promise) }
 
     before do
@@ -1571,10 +1592,6 @@ describe Dea::Instance do
   end
 
   describe 'health checks' do
-    let(:instance) do
-      Dea::Instance.new(bootstrap, valid_instance_attributes)
-    end
-
     let(:manifest_path) do
       File.join(tmpdir, 'rootfs', 'home', 'vcap', 'droplet.yaml')
     end
@@ -1626,6 +1643,7 @@ describe Dea::Instance do
 
     [Dea::Instance::State::RESUMING,
      Dea::Instance::State::RUNNING,
+     Dea::Instance::State::STARTING,
     ].each do |state|
       it "is triggered link when transitioning from #{state.inspect}" do
         instance.state = state

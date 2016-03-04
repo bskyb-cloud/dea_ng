@@ -23,6 +23,10 @@ describe Dea do
     end
 
     with_event_machine(:timeout => 1) do
+      # Hack to not have the test take too long because heartbeat interval is defined
+      # as an Integer in the schema.
+      bootstrap.config['intervals']['heartbeat'] = 0.01
+
       bootstrap.setup
       bootstrap.start
 
@@ -126,7 +130,7 @@ describe Dea do
             instance.state = state
           end
 
-          expect(heartbeat).to be_nil, "expected #{state} not to be included in heartbeat"
+          expect(heartbeat["droplets"]).to be_empty, "expected #{state} not to be included in heartbeat"
         end
       end
     end

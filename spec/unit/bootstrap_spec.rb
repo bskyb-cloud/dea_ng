@@ -88,7 +88,7 @@ describe Dea::Bootstrap do
     end
 
     it "should validate host" do
-      @config = { "index" => 0, "loggregator" => { "router" => "null:5432", "shared_secret" => "secret" } }
+      @config = { "index" => 0, "loggregator" => { "router" => ":5432", "shared_secret" => "secret" } }
 
       expect {
         bootstrap.setup_loggregator
@@ -224,9 +224,93 @@ describe Dea::Bootstrap do
     end
   end
 
+  describe "reap orphaned_containers" do
+    let(:warden_containers) { bootstrap.warden_container_lister }
+    let(:list_response) do
+      Warden::Protocol::ListResponse.new(
+        :handles => ["a", "b", "c", "d"]
+      )
+    end
+
+    let(:instance_registry) do
+      instance_registry = []
+      ["a"].each do |warden_handle|
+        instance_registry << double("instance_#{warden_handle}")
+        instance_registry.last.stub(:warden_handle).and_return(warden_handle)
+      end
+      instance_registry
+    end
+
+    let(:staging_task_registry) do
+      staging_task_registry= []
+      ["c"].each do |warden_handle|
+        staging_task_registry << double("staging_task_#{warden_handle}")
+        staging_task_registry.last.stub(:warden_handle).and_return(warden_handle)
+      end
+      staging_task_registry
+    end
+
+    before do
+      bootstrap.setup_warden_container_lister
+      bootstrap.setup_warden_container_lister
+      allow(bootstrap.warden_container_lister).to receive(:list).and_return list_response
+      bootstrap.stub(:instance_registry).and_return(instance_registry)
+      bootstrap.stub(:staging_task_registry).and_return(staging_task_registry)
+    end
+
+    it "should not reap orphaned containers on the first time" do
+      with_event_machine do
+        warden_containers.should_not_receive(:handle=).with('a')
+        warden_containers.should_not_receive(:handle=).with('b')
+        warden_containers.should_not_receive(:handle=).with('c')
+        warden_containers.should_not_receive(:handle=).with('d')
+        warden_containers.should_not_receive(:destroy!)
+        bootstrap.reap_orphaned_containers
+
+        after_defers_finish do
+          done
+        end
+      end
+    end
+
+    it "should reap orphaned containers if they remain orphan for two ticks" do
+      with_event_machine do
+        warden_containers.should_not_receive(:handle=).with('a')
+        warden_containers.should_not_receive(:handle=).with('c')
+        warden_containers.should_not_receive(:handle=).with('d')
+        warden_containers.should_receive(:handle=).with('b')
+        warden_containers.should_receive(:destroy!)
+        bootstrap.reap_orphaned_containers
+        instance_registry << double("instance_d")
+        instance_registry.last.stub(:warden_handle).and_return("d")
+        bootstrap.reap_orphaned_containers
+
+        after_defers_finish do
+          done
+        end
+      end
+    end
+
+    it "is resistant to errors" do
+      warden_containers.stub(:list).and_raise("error happened")
+      logger = double("logger")
+      bootstrap.should_receive(:logger).at_least(:once).and_return(logger)
+      allow(logger).to receive(:debug)
+      logger.should_receive(:error).with("error happened")
+
+      with_event_machine do
+        bootstrap.reap_orphaned_containers
+
+        after_defers_finish do
+          done
+        end
+      end
+    end
+  end
+
   describe "start_component" do
     it "adds stacks to varz" do
-      @config["stacks"] = ["Linux"]
+      @config["stacks"] = [{ "name" => "Linux" }]
 
       bootstrap.stub(:nats).and_return(nats_client_mock)
 
@@ -318,6 +402,18 @@ describe Dea::Bootstrap do
         it "is a hash with keys matching the container guid" do
           bootstrap.periodic_varz_update
           VCAP::Component.varz[:warden_containers].should == ["ahandle", "anotherhandle"]
+        end
+      end
+
+      context 'when the warden client is disconnected' do
+        before do
+          allow(bootstrap.warden_container_lister).to receive(:list).and_raise(::EM::Warden::Client::ConnectionError.new)
+        end
+
+        it 'should not explode' do
+          expect {
+            bootstrap.periodic_varz_update
+          }.not_to raise_error
         end
       end
     end
@@ -506,9 +602,7 @@ describe Dea::Bootstrap do
       Steno::Sink::Counter.should_receive(:new).once.and_return(log_counter)
 
       VCAP::Component.stub(:uuid)
-      nats_mock = double("nats")
-      nats_mock.stub(:client)
-      subject.stub(:nats).and_return(nats_mock)
+      bootstrap.stub(:nats).and_return(nats_client_mock)
 
       Steno.should_receive(:init) do |steno_config|
         expect(steno_config.sinks).to include log_counter
@@ -554,7 +648,8 @@ describe Dea::Bootstrap do
     end
 
     let(:instance) { double("instance", :start => nil, :running? => true, :application_version => app_version) }
-    let(:instance_registry) { double("isntance_registry") }
+    let(:instance2) { double("instance2", :start => nil, :running? => true, :application_version => app_version) }
+    let(:instance_registry) { double("instance_registry") }
     let(:snapshot) { double("snapshot") }
 
     before do
@@ -569,14 +664,16 @@ describe Dea::Bootstrap do
           expect(bootstrap).to receive(:instance_registry).at_least(:once).and_return(instance_registry)
           expect(bootstrap).to receive(:snapshot).and_return(snapshot)
           instance_updater = double(:instance_updater)
-          expect(Dea::InstanceUriUpdater).to receive(:new).with(instance, instance_data["uris"]).and_return(instance_updater)
+          expect(Dea::InstanceUriUpdater).to receive(:new).with(instance, instance_data["uris"]).ordered.and_return(instance_updater)
+          expect(Dea::InstanceUriUpdater).to receive(:new).with(instance2, instance_data["uris"]).ordered.and_return(instance_updater)
 
-          expect(instance_updater).to receive(:update).and_return(true)
+          expect(instance_updater).to receive(:update).twice.and_return(true)
 
           expect(instance).not_to receive(:application_version=).with(new_version)
 
-          expect(instance_registry).to receive(:instances_for_application).and_return({ "myinstanceid" => instance })
+          expect(instance_registry).to receive(:instances_for_application).and_return({ "myinstanceid" => instance, "mysecondinstanceid" => instance2 })
           expect(instance_registry).not_to receive(:change_instance_id).with(instance)
+          expect(instance_registry).not_to receive(:change_instance_id).with(instance2)
 
           expect(bootstrap).to receive(:send_heartbeat)
           expect(snapshot).to receive(:save)
@@ -627,9 +724,9 @@ describe Dea::Bootstrap do
       bootstrap.stub(:start_component)
       bootstrap.stub(:start_nats)
       bootstrap.stub(:start_directory_server)
-      bootstrap.stub(:greet_router)
       bootstrap.stub(:register_directory_server_v2)
       bootstrap.stub(:directory_server_v2) { double(:directory_server_v2, :start => nil) }
+      bootstrap.stub(:setup_register_routes)
       bootstrap.stub(:setup_varz)
       bootstrap.stub(:start_finish)
     end
@@ -644,6 +741,24 @@ describe Dea::Bootstrap do
 
         bootstrap.setup_snapshot
         bootstrap.start
+      end
+    end
+  end
+
+  describe "send_heartbeat" do
+    before do
+      EM.stub(:add_periodic_timer => nil, :add_timer => nil)
+      bootstrap.setup_nats
+      bootstrap.start_nats
+    end
+
+    context "when there are no registered instances" do
+      it "publishes an empty dea.heartbeat" do
+        allow(nats_mock).to receive(:publish)
+
+        bootstrap.send_heartbeat
+
+        expect(nats_mock).to have_received(:publish).with("dea.heartbeat", anything)
       end
     end
   end

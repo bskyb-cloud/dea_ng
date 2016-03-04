@@ -16,8 +16,13 @@ module Dea
           ["TMPDIR", "$PWD/tmp"],
           ["VCAP_APP_HOST", "0.0.0.0"],
           ["VCAP_APP_PORT", @instance.instance_container_port],
+          ["PORT", "$VCAP_APP_PORT"],
           ["VCAP_ZONE", @instance.instance_zone],
-          ["PORT", "$VCAP_APP_PORT"]
+          ["CF_INSTANCE_INDEX", @message.index],
+          ["CF_INSTANCE_IP", @instance.bootstrap.local_ip],
+          ["CF_INSTANCE_PORT", @instance.instance_container_port],
+          ["CF_INSTANCE_ADDR", "#{@instance.bootstrap.local_ip}:#{@instance.instance_container_port}"],
+          ["CF_INSTANCE_PORTS", %([{"external":#{@instance.instance_host_port},"internal":#{@instance.instance_container_port}}])]
         ]
       end
 

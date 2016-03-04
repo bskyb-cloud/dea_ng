@@ -12,6 +12,25 @@ describe AdminBuildpackDownloader do
     AdminBuildpackDownloader.new(buildpacks, destination_directory, logger)
   end
 
+  context "with zero buildpacks" do
+    let(:buildpacks) { [] }
+
+    context "when the destination directory exists" do
+      it "does nothing" do
+        expect { subject }.not_to raise_error
+      end
+    end
+
+    context "when the destination directory does not exist" do
+      let(:destination_directory) { File.join(Dir.mktmpdir, "foo") }
+
+      it "creates it" do
+        subject.download
+        expect(Dir.exists?(destination_directory)).to be_true
+      end
+    end
+  end
+
   context "with single buildpack" do
     let(:buildpacks) do
       [
@@ -26,6 +45,15 @@ describe AdminBuildpackDownloader do
       stub_request(:any, "http://example.com/buildpacks/uri/abcdef").to_return(
           body: File.new(zip_file)
       )
+    end
+
+    context "when the destination directory does not exist" do
+      let(:destination_directory) { File.join(Dir.mktmpdir, "foo") }
+
+      it "creates it" do
+        do_download
+        expect(Dir.exists?(destination_directory)).to be_true
+      end
     end
 
     it "downloads the buildpack and unzip it" do
@@ -74,15 +102,37 @@ describe AdminBuildpackDownloader do
       expect(Pathname.new(destination_directory).children).to have(2).items
     end
 
-    it "raises an exception if the download fails" do
-      stub_request(:any, "http://example.com/buildpacks/uri/abcdef").to_return(
-        :status => [500, "Internal Server Error"]
-      )
-      expect {
-        do_download
-      }.to raise_error
+    context "when downloading a buildpack fails" do
+      it "retries downloading up to 3 times" do
+        stub_request(:any, "http://example.com/buildpacks/uri/abcdef").to_return(
+          { :status => [500, "Internal Server Error"] },
+          { :status => [500, "Internal Server Error"] },
+          { body: File.new(zip_file) }
+        )
+        expect {
+          do_download
+        }.not_to raise_error
 
-      expect(Pathname.new(destination_directory).children).to have(0).item
+        expect(Dir.entries(File.join(destination_directory))).to include("ijgh")
+        expect(Dir.entries(File.join(destination_directory))).to include("abcdef")
+        expect(Pathname.new(destination_directory).children).to have(2).items
+      end
+
+      context "and the download failure continues" do
+        it "raises an exception after 3 failures" do
+          stub_request(:any, "http://example.com/buildpacks/uri/abcdef").to_return(
+            { :status => [500, "Internal Server Error"] },
+            { :status => [500, "Internal Server Error"] },
+            { :status => [500, "Internal Server Error"] },
+            { body: File.new(zip_file) }
+          )
+          expect {
+            do_download
+          }.to raise_error
+
+          expect(Pathname.new(destination_directory).children).to have(0).item
+        end
+      end
     end
   end
 

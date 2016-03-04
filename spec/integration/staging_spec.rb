@@ -37,7 +37,7 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
       "limits" => limits,
       "services" => [],
       "env" => env,
-      "stack" => "lucid64",
+      "stack" => "cflinuxfs2",
     }
   end
 
@@ -52,7 +52,7 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
       "buildpack_cache_download_uri" => buildpack_cache_download_uri,
       "start_message" => start_message,
       "admin_buildpacks" => admin_buildpacks,
-      "stack" => "lucid64",
+      "stack" => "cflinuxfs2",
     }
   end
 
@@ -70,6 +70,9 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
       response, staging_log = perform_stage_request(staging_message)
       expect(staging_log).to include("-----> Some admin compilation output")
       expect(response["error"]).to be_nil
+      expect(response["procfile"]).to eq({
+        "web" => 'while true; do (echo "hi from admin buildpack" | nc -l $PORT); done'
+      })
     end
 
     context "when having 2 admin buildpacks" do
@@ -163,12 +166,78 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
             stage_with_no_admin_buildpacks
           }.to change{ admin_buildpack_dir_size }.by(-1)
         end
+      end
+    end
+  end
 
-        def admin_buildpack_dir_size
-          admin_buildpack_dir = File.join(dea_config["base_dir"], "admin_buildpacks")
-          (dea_server.directory_entries(admin_buildpack_dir) - %w[. ..]).size
+  describe "pre-downloading admin buildpacks" do
+    let(:admin_buildpacks) do
+      [
+        {
+          "url" => "http://#{file_server_address}/admin_buildpacks/admin_buildpack",
+          "key" => "predownload1"
+        },
+        {
+          "url" => "http://#{file_server_address}/admin_buildpacks/start_command",
+          "key" => "predownload2"
+        }
+      ]
+    end
+
+    context "after a buildpacks message has been received and processed" do
+      def publish_buildpacks_announcement
+        nats.publish("buildpacks", admin_buildpacks)
+      end
+
+      it "downloads buildpacks to staging workspace" do
+        publish_buildpacks_announcement
+
+        within_n_seconds(20) do
+          expect(admin_buildpack_dir_size).to eq(2)
         end
       end
+
+      def within_n_seconds(n)
+        start = Time.now
+        begin
+          yield
+          sleep 1
+        rescue => e
+          raise e unless (Time.now - start) < n
+          retry
+        end
+      end
+    end
+  end
+
+  def admin_buildpack_dir_size
+    admin_buildpack_dir = File.join(dea_config["base_dir"], "admin_buildpacks")
+    (dea_server.directory_entries(admin_buildpack_dir) - %w[. ..]).size
+  end
+
+  context 'when choosing a specific stack' do
+    before { setup_fake_buildpack("start_command") }
+
+    let(:buildpack_url) { fake_buildpack_url("start_command")}
+    let(:properties) { {"buildpack" => buildpack_url, "environment" => env, "resources" => limits} }
+
+    it 'compiles on trusty stack' do
+      buildpack_cache_file = File.join(FILE_SERVER_DIR, "buildpack_cache.tgz")
+      FileUtils.rm_rf(buildpack_cache_file)
+
+      response, staging_log = perform_stage_request(staging_message)
+      expect(response["error"]).to be_nil
+      expect(staging_log).to include("DISTRIB_CODENAME=trusty")
+    end
+
+    it 'compiles on lucid stack' do
+      staging_message['stack'] = 'lucid64'
+      buildpack_cache_file = File.join(FILE_SERVER_DIR, "buildpack_cache.tgz")
+      FileUtils.rm_rf(buildpack_cache_file)
+
+      response, staging_log = perform_stage_request(staging_message)
+      expect(response["error"]).to be_nil
+      expect(staging_log).to include("DISTRIB_CODENAME=lucid")
     end
   end
 
@@ -278,12 +347,7 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
     end
 
     it "unregisters the staging task" do
-      begin
-        Timeout::timeout(10) do
-          perform_stage_request(staging_message)
-        end
-      rescue Timeout::Error
-      end
+      perform_stage_request(staging_message)
       expect(instances_json["staging_tasks"]).to be_empty
     end
   end
@@ -305,12 +369,7 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
     end
 
     it "unregisters the staging task" do
-      begin
-        Timeout::timeout(10) do
-          perform_stage_request(staging_message)
-        end
-      rescue Timeout::Error
-      end
+      perform_stage_request(staging_message)
       expect(instances_json["staging_tasks"]).to be_empty
     end
   end

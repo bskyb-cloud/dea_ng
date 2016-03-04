@@ -38,7 +38,6 @@ describe Dea::StagingTask do
         }
       ],
       'staging' => {
-        'environment' => { 'BUILDPACK_CACHE' => 'buildpack_cache_url'},
         'cpu_limit_shares' => 512,
         'memory_limit_mb' => memory_limit_mb,
         'disk_limit_mb' => disk_limit_mb,
@@ -101,10 +100,9 @@ describe Dea::StagingTask do
       it 'calls the container#spawn with the staging command' do
         expect(staging_task.container).to receive(:spawn) do |cmd|
           expect(cmd).to include 'export FOO="BAR";'
-          expect(cmd).to include 'export BUILDPACK_CACHE="buildpack_cache_url";'
           expect(cmd).to include 'export STAGING_TIMEOUT="900.0";'
           expect(cmd).to include 'export MEMORY_LIMIT="512m";' # the user assiged 512 should overwrite the system 256
-          expect(cmd).to include 'export VCAP_SERVICES="'
+          expect(cmd).to include 'export VCAP_SERVICES=\{\}'
 
           expect(cmd).to match %r{.*/bin/run .*/plugin_config | tee -a}
 
@@ -118,7 +116,7 @@ describe Dea::StagingTask do
       end
 
       context 'when env variables need to be escaped' do
-        before { attributes['start_message']['env'] = ['PATH=x y z', "FOO=z'y\"d", 'BAR=', 'BAZ=foo=baz'] }
+        before { attributes['properties']['environment'] = ['PATH=x y z', "FOO=z'y\"d", 'BAR=', 'BAZ=foo=baz'] }
 
         it 'copes with spaces' do
           staging_task.container.should_receive(:spawn) do |cmd|
@@ -277,6 +275,22 @@ YAML
     end
   end
 
+  describe 'procfile' do
+    before do
+      contents = <<YAML
+---
+effective_procfile:
+  web: npm start
+YAML
+      staging_info = File.join(workspace_dir, 'staging_info.yml')
+      File.open(staging_info, 'w') { |f| f.write(contents) }
+    end
+
+    it 'returns the detected buildpack' do
+      staging_task.procfile.should eq({"web" => "npm start"})
+    end
+  end
+
   describe '#detected_buildpack' do
     before do
       contents = <<YAML
@@ -289,6 +303,21 @@ YAML
 
     it 'returns the detected buildpack' do
       staging_task.detected_buildpack.should eq('Ruby/Rack')
+    end
+  end
+
+  describe '#detected_start_command' do
+    before do
+      contents = <<YAML
+---
+start_command: bacofoil
+YAML
+      staging_info = File.join(workspace_dir, 'staging_info.yml')
+      File.open(staging_info, 'w') { |f| f.write(contents) }
+    end
+
+    it 'returns the detected start command' do
+      staging_task.detected_start_command.should eq('bacofoil')
     end
   end
 
@@ -865,6 +894,35 @@ YAML
 
       it 'uses 2GB as a default' do
         staging_task.disk_limit_in_bytes.should eq(2*1024*1024*1024)
+      end
+    end
+  end
+
+  describe '#disk_limit_mb and #mem_limit_mb' do
+    context 'when specified in the staging message' do
+      let(:mem_limit) { 1024 }
+      let(:disk_limit) { 2048 }
+
+      let(:attributes) do
+        valid_staging_attributes.merge({
+          "memory_limit" => mem_limit,
+          "disk_limit" => disk_limit
+        })
+      end
+
+      it 'returns the staging messages limit values' do
+        expect(staging_task.disk_limit_mb).to eq(disk_limit)
+        expect(staging_task.memory_limit_mb).to eq(mem_limit)
+      end
+    end
+
+    context 'when unspecified' do
+      let(:disk_limit_mb) { 3333 } # default staging disk limit of config object
+      let(:memory_limit_mb) { 1234 }
+
+      it 'returns the defaults' do
+        expect(staging_task.disk_limit_mb).to eq(disk_limit_mb)
+        expect(staging_task.memory_limit_mb).to eq(memory_limit_mb)
       end
     end
   end

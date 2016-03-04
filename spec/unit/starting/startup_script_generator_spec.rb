@@ -5,7 +5,7 @@ describe Dea::StartupScriptGenerator do
   let(:user_envs) { %Q{export usr1="usrval1";\nexport usr2="usrval2";\nunset unset_var;\n} }
   let(:system_envs) { %Q{export usr1="sys_user_val1";\nexport sys1="sysval1";\n} }
   let(:used_buildpack) { '' }
-  let(:start_command) { 'go_nuts' }
+  let(:start_command) { "go_nuts 'man' ; echo 'wooooohooo'" }
 
   let(:generator) { Dea::StartupScriptGenerator.new(start_command, user_envs, system_envs) }
 
@@ -40,19 +40,14 @@ describe Dea::StartupScriptGenerator do
         script.should match /"sysval1".*\.profile\.d/m
       end
 
-      it "sets user variables after buildpack variables" do
-        script.should match /\.profile\.d.*usrval1/m
-      end
-
-      it "print env to a log file after user envs" do
-        script.should include "env > logs/env.log"
-        script.should match /usrval1.*env\.log/m
+      it "exports build pack variables after user variables" do
+        script.should match /usrval1.*\.profile\.d/m
       end
     end
 
     describe "starting app" do
-      it "includes the start command in the starting script" do
-        script.should include described_class::START_SCRIPT % start_command
+      it "includes the escaped start command in the starting script" do
+        expect(script).to include(described_class::START_SCRIPT % Shellwords.shellescape(start_command))
       end
     end
   end
