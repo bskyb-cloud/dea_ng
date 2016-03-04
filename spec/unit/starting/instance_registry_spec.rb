@@ -15,7 +15,7 @@ describe Dea::InstanceRegistry do
     end
     instance_registry
   end
-  let(:instance) { Dea::Instance.new(bootstrap, {"application_id" => 1, "warden_handle" => "handle1", "index" => 0}) }
+  let(:instance) { Dea::Instance.new(bootstrap, {"application_id" => 1, "warden_handle" => "handle1", "index" => 0, "services" => []}) }
 
   let(:instance1) { Dea::Instance.new(bootstrap, {"application_id" => 1, "warden_handle" => "handle2"}) }
 
@@ -427,6 +427,36 @@ describe Dea::InstanceRegistry do
     end
   end
 
+  describe "crash stopping" do
+    let(:time_of_check) { 66 }
+
+    before do
+      x = Time.now
+      x.stub(:to_i).and_return(time_of_check)
+      Time.stub(:now).and_return(x)
+    end
+
+    it "should reap stoppings that are too old" do
+      instances = [15, 5].each_with_index.map do |age, ii|
+        register_stopping_instance(instance_registry,
+                                  :application_id => ii,
+                                  :state_timestamp => age,
+                                  :promise_stop => delivering_promise)
+      end
+
+      with_event_machine do
+        instance_registry.reap_stopping
+
+        after_defers_finish do
+          instances[0].should_not be_stopped
+          instances[1].should be_stopped
+
+          done
+        end
+      end
+    end
+  end
+
   describe "#reap_crash" do
     include_context "tmpdir"
 
@@ -508,6 +538,20 @@ describe Dea::InstanceRegistry do
     end
   end
 
+  describe "to_hash" do
+    before do
+      instance_registry.register(instance)
+    end
+
+    it "excludes environment variables" do
+      expect(instance_registry.to_hash.to_s).to_not include("environment")
+    end
+
+    it "excludes services" do
+      expect(instance_registry.to_hash.to_s).to_not include("services")
+    end
+  end
+
   def register_crashed_instance(instance_registry, options = {})
     instance = Dea::Instance.new(bootstrap, {})
     instance.state = Dea::Instance::State::CRASHED
@@ -523,6 +567,32 @@ describe Dea::InstanceRegistry do
     end
 
     FileUtils.mkdir_p(crash_path)
+
+    instance_registry.register(instance) if instance_registry
+
+    instance
+  end
+
+  def register_starting_instance(instance_registry, options = {})
+    instance = Dea::Instance.new(bootstrap, {})
+    instance.state = Dea::Instance::State::STARTING
+
+    options.each do |key, value|
+      instance.stub(key).and_return(value)
+    end
+
+    instance_registry.register(instance) if instance_registry
+
+    instance
+  end
+
+  def register_stopping_instance(instance_registry, options = {})
+    instance = Dea::Instance.new(bootstrap, {})
+    instance.state = Dea::Instance::State::STOPPING
+
+    options.each do |key, value|
+      instance.stub(key).and_return(value)
+    end
 
     instance_registry.register(instance) if instance_registry
 

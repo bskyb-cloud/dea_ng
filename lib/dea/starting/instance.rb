@@ -88,6 +88,18 @@ module Dea
       end
     end
 
+    class Entering < Struct.new(:to)
+      def initialize(to)
+        super(to.to_s.downcase)
+      end
+    end
+
+    class Exiting < Struct.new(:from)
+      def initialize(from)
+        super(from.to_s.downcase)
+      end
+    end
+
     class TransitionError < BaseError
       attr_reader :from
       attr_reader :to
@@ -111,7 +123,7 @@ module Dea
 
     class StackNotFoundError < BaseError; end
 
-    class AttributesLoggingFilter
+    class ProtectedAttributesFilter
       FILTER = %w[services environment droplet_uri]
 
       def initialize(attributes)
@@ -276,7 +288,7 @@ module Dea
       @exit_status = -1
       @exit_description = ''
 
-      logger.user_data[:attributes] = AttributesLoggingFilter.new(@attributes)
+      logger.user_data[:attributes] = ProtectedAttributesFilter.new(@attributes)
 
       setup_container_from_snapshot
     end
@@ -342,7 +354,10 @@ module Dea
     end
 
     def state=(state)
-      transition = Transition.new(attributes['state'], state)
+      oldState = attributes['state']
+      exiting = Exiting.new(oldState)
+      transition = Transition.new(oldState, state)
+      entering = Entering.new(state)
 
       attributes['state'] = state
       attributes['state_timestamp'] = Time.now.to_f
@@ -350,7 +365,9 @@ module Dea
       state_time = "state_#{state.to_s.downcase}_timestamp"
       attributes[state_time] = Time.now.to_f
 
+      emit(exiting)
       emit(transition)
+      emit(entering)
     end
 
     def state_timestamp
@@ -404,6 +421,7 @@ module Dea
         script << 'cd /'
         script << 'mkdir -p home/vcap/app'
         script << 'chown vcap:vcap home/vcap/app'
+        script << 'rm -rf /app' 
         script << 'ln -s home/vcap/app /app'
         script << 'rm -fr /etc/ssh/ssh_host_dsa_key'
         script << 'rm -fr /etc/ssh/ssh_host_rsa_key'
@@ -417,7 +435,7 @@ module Dea
         script << 'chown -R vcap:vcap /home/vcap/.ssh'
 	      script << 'chown -R vcap:vcap /home/vcap'
 
-        container.run_script(:app, script.join(" && "), true)
+        container.run_script(:app, script.join(' && '), true)
         
         p.deliver
       end
@@ -716,15 +734,19 @@ module Dea
       p = Promise.new do
         logger.info('droplet.stopping')
 
-        promise_exec_hook_script('before_stop').resolve
+        case self.state
+          when State::BORN
+            self.state = State::STOPPED
+          when State::STOPPED
+          else
+            promise_state([State::STARTING, State::STOPPING, State::RUNNING, State::EVACUATING], State::STOPPING).resolve
 
-        promise_state([State::STOPPING, State::RUNNING, State::EVACUATING], State::STOPPING).resolve
+            promise_exec_hook_script('before_stop').resolve
+            promise_stop.resolve
+            promise_exec_hook_script('after_stop').resolve
 
-        promise_exec_hook_script('after_stop').resolve
-
-        promise_stop.resolve
-
-        promise_state(State::STOPPING, State::STOPPED).resolve
+            promise_state([State::STOPPING, State::STOPPED], State::STOPPED).resolve
+        end
 
         p.deliver
       end
@@ -748,17 +770,7 @@ module Dea
 
     def setup_crash_handler
       # Resuming to crashed state
-      on(Transition.new(:resuming, :crashed)) do
-        crash_handler
-      end
-
-      # On crash
-      on(Transition.new(:starting, :crashed)) do
-        crash_handler
-      end
-
-      # On crash
-      on(Transition.new(:running, :crashed)) do
+      on(Entering.new(:crashed)) do
         crash_handler
       end
     end
@@ -787,11 +799,7 @@ module Dea
     end
 
     def setup_stat_collector
-      on(Transition.new(:resuming, :running)) do
-        stat_collector.start
-      end
-
-      on(Transition.new(:starting, :running)) do
+      on(Entering.new(:running)) do
         stat_collector.start
       end
 
@@ -939,7 +947,7 @@ module Dea
     end
 
     def attributes_and_stats
-      @attributes.merge({
+      ProtectedAttributesFilter.new(@attributes).to_hash.merge({
           'used_memory_in_bytes' => used_memory_in_bytes,
           'used_disk_in_bytes' => used_disk_in_bytes,
           'computed_pcpu' => computed_pcpu

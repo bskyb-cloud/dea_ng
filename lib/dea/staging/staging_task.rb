@@ -120,6 +120,14 @@ module Dea
       task_info['detected_buildpack']
     end
 
+    def detected_start_command
+      task_info['start_command']
+    end
+
+    def procfile
+      task_info['effective_procfile']
+    end
+
     def buildpack_path
       task_info['buildpack_path']
     end
@@ -133,7 +141,7 @@ module Dea
     end
 
     def memory_limit_mb
-      [(config.minimum_staging_memory_mb).to_i, staging_message.start_message.mem_limit.to_i].max
+      [(config.minimum_staging_memory_mb).to_i, (staging_message.mem_limit).to_i].max
     end
 
     def memory_limit_in_bytes
@@ -142,7 +150,7 @@ module Dea
     alias :used_memory_in_bytes :memory_limit_in_bytes
 
     def disk_limit_mb
-      [(config.minimum_staging_disk_mb).to_i, staging_message.start_message.disk_limit.to_i].max
+      [(config.minimum_staging_disk_mb).to_i, (staging_message.disk_limit).to_i].max
     end
 
     def disk_limit_in_bytes
@@ -175,6 +183,7 @@ module Dea
     def trigger_after_setup(error)
       @after_setup_callback.call(error) if @after_setup_callback
     end
+
     private :trigger_after_setup
 
     def after_complete_callback(&blk)

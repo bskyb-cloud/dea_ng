@@ -32,7 +32,7 @@ describe "Deterministic Evacuation", :type => :integration, :requires_warden => 
         "fds" => 32
       },
       "services" => [valid_provided_service],
-      "stack" => "trusty64",
+      "stack" => "cflinuxfs2",
     }
   end
 
@@ -45,7 +45,7 @@ describe "Deterministic Evacuation", :type => :integration, :requires_warden => 
       "buildpack_cache_upload_uri" => buildpack_cache_upload_uri,
       "buildpack_cache_download_uri" => buildpack_cache_download_uri,
       "start_message" => start_message,
-      "stack" => "trusty64",
+      "stack" => "cflinuxfs2",
     }
   end
 
@@ -68,7 +68,6 @@ describe "Deterministic Evacuation", :type => :integration, :requires_warden => 
 
   it "starts heartbeating in the EVACUATING state and, when all EVACUATING instances are stopped, it dies" do
     expect(dea_server).to_not be_terminated
-    nats.publish("router.start", {:minimumRegisterIntervalInSeconds => 1})
 
     setup_fake_buildpack("start_command")
     nats.make_blocking_request("staging", staging_message, 2)

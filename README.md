@@ -91,6 +91,12 @@ git clone https://github.com/cloudfoundry/dea_ng
 # Verify that Vagrant version is at least 1.5
 vagrant --version
 
+# Ensure the guest additions plugin is installed
+# NOTE: On mac, we had to 
+# export NOKOGIRI_USE_SYSTEM_LIBRARIES=true
+
+vagrant plugin install vagrant-vbguest
+
 # Run test suite in Vagrant vm
 bin/test_in_vm
 ```

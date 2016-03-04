@@ -6,8 +6,16 @@ require "dea/starting/instance"
 module Dea::Starting
   describe Env do
     subject(:env) {Env.new(message, instance)}
-    let(:message) { instance_double("StartMessage") }
-    let(:instance) { instance_double("Dea::Instance", instance_container_port: "fake_port", instance_zone: "zone1") }
+    let(:message) { instance_double("StartMessage", index: "fake_index") }
+    let(:instance) do
+      instance_double(
+        "Dea::Instance",
+        instance_container_port: "fake_port",
+        instance_zone: "zone1",
+        instance_host_port: "fake_external_port",
+        bootstrap: double(:bootstrap, local_ip: "fake_ip")
+      )
+    end
 
     describe "system environment variables" do
       subject(:system_environment_variables) { env.system_environment_variables }
@@ -18,8 +26,13 @@ module Dea::Starting
                                                       %w(TMPDIR $PWD/tmp),
                                                       %w(VCAP_APP_HOST 0.0.0.0),
                                                       %w(VCAP_APP_PORT fake_port),
+                                                      %w(PORT $VCAP_APP_PORT),
                                                       %w(VCAP_ZONE zone1),
-                                                      %w(PORT $VCAP_APP_PORT)
+                                                      %w(CF_INSTANCE_INDEX fake_index),
+                                                      %w(CF_INSTANCE_IP fake_ip),
+                                                      %w(CF_INSTANCE_PORT fake_port),
+                                                      %w(CF_INSTANCE_ADDR fake_ip:fake_port),
+                                                      %w(CF_INSTANCE_PORTS [{"external":fake_external_port,"internal":fake_port}])
                                                     ])
       end
     end

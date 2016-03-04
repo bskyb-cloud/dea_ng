@@ -44,6 +44,7 @@ module Dea
   class Bootstrap
     DEFAULT_HEARTBEAT_INTERVAL = 10 # In secs
     DROPLET_REAPER_INTERVAL_SECS = 60
+    CONTAINER_REAPER_INTERVAL_SECS = 30
 
     DISCOVER_DELAY_MS_PER_INSTANCE = 10
     DISCOVER_DELAY_MS_MEM = 100
@@ -58,6 +59,7 @@ module Dea
     def initialize(config = {})
       @config = Config.new(config)
       @log_counter = Steno::Sink::Counter.new
+      @orphaned_containers = []
     end
 
     def local_ip
@@ -94,7 +96,7 @@ module Dea
 
     def setup_varz
       VCAP::Component.varz.synchronize do
-        VCAP::Component.varz[:stacks] = config["stacks"]
+        VCAP::Component.varz[:stacks] = config["stacks"].map { |stack| stack['name'] }
       end
 
       EM.add_periodic_timer(DEFAULT_HEARTBEAT_INTERVAL) do
@@ -235,6 +237,37 @@ module Dea
       EM.add_periodic_timer(DROPLET_REAPER_INTERVAL_SECS) do
         reap_unreferenced_droplets
       end
+
+      EM.add_periodic_timer(CONTAINER_REAPER_INTERVAL_SECS) do
+        reap_orphaned_containers
+      end
+    end
+
+    def reap_orphaned_containers
+      logger.debug("Reaping orphaned containers")
+
+      promise_handles = Dea::Promise.new do |p|
+        p.deliver warden_container_lister.list.handles
+      end
+
+      Dea::Promise.resolve(promise_handles) do |error, handles|
+        if error
+          logger.error(error.message)
+        else
+          orphaned = []
+          if handles
+            known_instances = instance_registry.map(&:warden_handle)
+            known_stagers = staging_task_registry.map(&:warden_handle)
+            orphaned = handles - ( known_instances | known_stagers )
+          end
+          (@orphaned_containers & orphaned).each do |handle|
+            logger.debug("reaping orphaned container with handle #{handle}")
+            warden_container_lister.handle = handle
+            warden_container_lister.destroy!
+          end
+          @orphaned_containers = orphaned - (@orphaned_containers & orphaned)
+        end
+      end
     end
 
     def setup_directory_server_v2
@@ -254,6 +287,7 @@ module Dea
         Dea::Responders::DeaLocator.new(nats, uuid, resource_manager, config),
         Dea::Responders::StagingLocator.new(nats, uuid, resource_manager, config),
         Dea::Responders::Staging.new(nats, uuid, self, staging_task_registry, directory_server_v2, resource_manager, config),
+        Dea::Responders::BuildpackDownloader.new(nats, config),
       ].each(&:start)
     end
 
@@ -305,19 +339,12 @@ module Dea
 
       start_component
       start_nats
-      greet_router
-      register_directory_server_v2
+      setup_register_routes
       directory_server_v2.start
       setup_varz
 
       setup_signal_handlers
       start_finish
-    end
-
-    def greet_router
-      @router_client.greet do |response|
-        handle_router_start(response)
-      end
     end
 
     def reap_unreferenced_droplets
@@ -339,17 +366,17 @@ module Dea
       send_heartbeat()
     end
 
-    def handle_router_start(message)
-      interval = message.data.nil? ? nil : message.data["minimumRegisterIntervalInSeconds"]
+    def setup_register_routes
       register_routes
+      interval = config["intervals"]["router_register_in_seconds"]
 
-      if interval
-        EM.cancel_timer(@registration_timer) if @registration_timer
-
-        @registration_timer = EM.add_periodic_timer(interval) do
-          register_routes
-        end
+      @registration_timer = EM.add_periodic_timer(interval) do
+        register_routes
       end
+    end
+
+    def handle_router_start
+      register_routes
     end
 
     def register_routes
@@ -378,7 +405,7 @@ module Dea
 
     def handle_dea_stop(message)
       instance_registry.instances_filtered_by_message(message) do |instance|
-        next unless instance.running? || instance.starting? || instance.evacuating?
+        next if instance.resuming? || instance.stopped? || instance.crashed?
 
         instance.stop do |error|
           logger.warn("Failed stopping #{instance}: #{error}") if error
@@ -391,18 +418,19 @@ module Dea
       uris = message.data["uris"]
       app_version = message.data["version"]
 
-      updated = false
+      updated = []
       instance_registry.instances_for_application(app_id).dup.each do |_, instance|
         next unless instance.running? || instance.evacuating?
-        updated ||= InstanceUriUpdater.new(instance, uris).update(router_client)
+        instance_updated = InstanceUriUpdater.new(instance, uris).update(router_client)
         if app_version != instance.application_version
           instance.application_version = app_version
           instance_registry.change_instance_id(instance)
-          updated = true
+          instance_updated = true
         end
+        updated << instance_updated
       end
 
-      if updated
+      if updated.reduce { |value, next_value| value && next_value }
         send_heartbeat
         snapshot.save
       end
@@ -441,8 +469,6 @@ module Dea
         instance.starting? || instance.running? || instance.crashed? || instance.evacuating?
       end
 
-      return if instances.empty?
-
       hbs = Dea::Protocol::V1::HeartbeatResponse.generate(self, instances)
       nats.publish("dea.heartbeat", hbs)
 
@@ -465,6 +491,8 @@ module Dea
         VCAP::Component.varz[:instance_registry] = instance_registry.to_hash
         VCAP::Component.varz[:warden_containers] = warden_containers
       end
+    rescue => e
+      logger.error('periodic.varz.failure', error: e, backtrace: e.backtrace)
     end
 
     private

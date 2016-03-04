@@ -61,10 +61,9 @@ directory_server:
 
 stacks:
   - name: lucid64
-    package_path: /var/vcap/packages/rootfs_lucid64
-  - name: trusty64
-    package_path: /var/vcap/packages/rootfs_trusty64
-
+    package_path: /var/warden/rootfs_lucid
+  - name: cflinuxfs2
+    package_path: /var/warden/rootfs_cflinuxfs2
 # Hook scripts for droplet start/stop
 # hooks:
 #   before_start: path/to/script
