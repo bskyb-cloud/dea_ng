@@ -43,6 +43,11 @@ describe Dea::StartupScriptGenerator do
       it "exports build pack variables after user variables" do
         script.should match /usrval1.*\.profile\.d/m
       end
+
+      it "print env to a log file after user envs" do
+        script.should include "env > logs/env.log"
+        script.should match /usrval1.*env\.log/m
+      end
     end
 
     describe "starting app" do
