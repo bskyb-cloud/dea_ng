@@ -8,7 +8,6 @@ logging:
 
 loggregator:
   router: 127.0.0.1:3456
-  shared_secret: loggregatorsharedsecret
 
 resources:
   memory_mb: 2048
@@ -60,8 +59,6 @@ directory_server:
     level: info
 
 stacks:
-  - name: lucid64
-    package_path: /var/warden/rootfs_lucid
   - name: cflinuxfs2
     package_path: /var/warden/rootfs_cflinuxfs2
 # Hook scripts for droplet start/stop
@@ -73,6 +70,8 @@ stacks:
 
 placement_properties:
   zone: "CRAZY_TOWN"
+
+cc_url: https://user:password@api.localhost.xip.io
 
 # firewalls:
 #   script: /var/vcap/packages/dea_next/firewalls/obtain_firewall_config.rb

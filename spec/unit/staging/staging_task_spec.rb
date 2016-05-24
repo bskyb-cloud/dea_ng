@@ -42,7 +42,8 @@ describe Dea::StagingTask do
         'memory_limit_mb' => memory_limit_mb,
         'disk_limit_mb' => disk_limit_mb,
         'disk_inode_limit' => disk_inode_limit,
-        'max_staging_duration' => max_staging_duration
+        'max_staging_duration' => max_staging_duration,
+        'bandwidth_limit' => { 'rate' => 20_000_000, 'burst' => 100_000_000 },
       },
     }
   end
@@ -561,30 +562,26 @@ YAML
 
             it 'cleans up workspace' do
               expect {
-                staging_task.start rescue nil
+                staging_task.start
               }.to change { File.exists?(workspace_dir) }.from(true).to(false)
             end if options[:callback_failure_cleanup_assertions]
 
             it 'calls registered callback exactly once' do
-              staging_task.start rescue nil
+              staging_task.start
               @received_count.should == 1
             end
 
             context 'and there is no error from staging' do
-              it 'raises error raised in the callback' do
-                expect {
-                  staging_task.start
-                }.to raise_error(/failing callback/)
+              it 'does not raises an error from the callback' do
+                staging_task.start
               end
             end
 
             context 'and there is an error from staging' do
               before { staging_task.stub(options[:failure_cause]).and_return(failing_promise) }
 
-              it 'raises the staging error' do
-                expect {
-                  staging_task.start
-                }.to raise_error(/failing callback/)
+              it 'does not raise the staging error' do
+                staging_task.start
               end
             end
           end
@@ -599,11 +596,24 @@ YAML
       :callback_failure_cleanup_assertions => true
     }
 
+    context 'when finished' do
+      before do
+        stub_staging_setup
+        staging_task.should_receive(:resolve_staging)
+        stub_staging_upload
+      end
+
+      it 'should close all connections' do
+        expect(staging_task.container).to receive(:close_all_connections)
+        staging_task.start
+      end
+    end
+
     it 'should clean up after itself' do
       staging_task.workspace.stub(:prepare).and_raise('Error')
       stub_staging_upload
 
-      expect { staging_task.start }.to raise_error(/Error/)
+      staging_task.start
       File.exists?(workspace_dir).should be_false
     end
 
@@ -619,17 +629,13 @@ YAML
         staging_task.start rescue nil
       end
 
-      it 'propagates the error' do
-        expect { staging_task.start }.to raise_error(/Script Failed/)
-      end
-
       it 'returns an error in response' do
         response = nil
         staging_task.after_complete_callback do |callback_response|
           response = callback_response
         end
 
-        staging_task.start rescue nil
+        staging_task.start
 
         expect(response.message).to match /Script Failed/
       end
@@ -663,6 +669,7 @@ YAML
 
     it 'performs staging setup operations in correct order' do
       with_network = false
+      expected_bandwidth = { rate: 20_000_000, burst: 100_000_000 }
       staging_task.workspace.should_receive(:prepare).ordered
       staging_task.workspace.workspace_dir
       staging_task.container.should_receive(:create_container).
@@ -673,7 +680,8 @@ YAML
              limit_memory: staging_task.memory_limit_in_bytes,
              setup_inbound_network: with_network,
              egress_rules: staging_task.staging_message.egress_rules,
-             rootfs: rootfs).ordered
+             rootfs: rootfs,
+             limit_bandwidth: expected_bandwidth).ordered
       %w(
         promise_app_download
         promise_prepare_staging_log
@@ -760,7 +768,7 @@ YAML
         config['stacks'][0]['name'] = 'wrong-name'
       end
 
-      it 'raises an error' do
+      it 'reports an error' do
         response = nil
         staging_task.after_complete_callback do |callback_response|
           response = callback_response
@@ -768,7 +776,7 @@ YAML
 
         stub_staging
         stub_staging_upload
-        expect { staging_task.start }.to raise_error
+        staging_task.start
         expect(response.message).to match(/Stack my-stack does not exist/)
       end
     end
@@ -781,29 +789,26 @@ YAML
         stub_staging_upload
       end
 
-      def it_raises_and_returns_an_error
+      def it_raises_an_error
         response = nil
         staging_task.after_complete_callback do |callback_response|
           response = callback_response
         end
 
-        expect {
-          staging_task.start
-        }.to raise_error(some_terrible_error)
-
+        staging_task.start
         expect(response).to eq(some_terrible_error)
       end
 
       it 'copes with uploading errors' do
         staging_task.stub(:promise_app_upload).and_raise(some_terrible_error)
 
-        it_raises_and_returns_an_error
+        it_raises_an_error
       end
 
       it 'copes with buildpack cache errors' do
         staging_task.stub(:promise_save_buildpack_cache).and_raise(some_terrible_error)
 
-        it_raises_and_returns_an_error
+        it_raises_an_error
       end
     end
   end
@@ -1279,6 +1284,13 @@ YAML
 
     it 'includes syslog drain urls' do
       expect(staging_task.snapshot_attributes['syslog_drain_urls']).to eq(['abc', 'def'])
+    end
+  end
+
+  describe '#warden_handle' do
+    it 'gets the warden container handle' do
+      expect(staging_task.container).to receive(:handle).and_return('container_handle')
+      expect(staging_task.warden_handle).to eq('container_handle')
     end
   end
 

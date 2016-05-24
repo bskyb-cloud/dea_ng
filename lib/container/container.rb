@@ -121,6 +121,7 @@ class Container
       limit_cpu(params[:limit_cpu])
       limit_disk(byte: params[:byte], inode: params[:inode])
       limit_memory(params[:limit_memory])
+      limit_bandwidth(params[:limit_bandwidth]) if params[:limit_bandwidth]
       setup_inbound_network if params[:setup_inbound_network]
       setup_egress_rules(params[:egress_rules])
     end
@@ -235,6 +236,11 @@ class Container
 
   def limit_memory(bytes)
     call(:app, ::Warden::Protocol::LimitMemoryRequest.new(handle: handle, limit_in_bytes: bytes))
+  end
+
+  def limit_bandwidth(params)
+    request_params = { handle: handle, rate: params[:rate], burst: params[:burst] }
+    call(:app, ::Warden::Protocol::LimitBandwidthRequest.new(request_params))
   end
 
   private

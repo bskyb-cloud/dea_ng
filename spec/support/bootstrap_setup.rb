@@ -14,6 +14,7 @@ shared_context "bootstrap_setup" do
         "router_register_in_seconds" => 20,
       },
       "runtimes" => %w[test1 test2],
+      "cc_url" => "cc.example.com",
       "directory_server" => {
         "v2_port" => 23456,
       },
@@ -32,8 +33,8 @@ shared_context "bootstrap_setup" do
       },
       "stacks" => [
         {
-          "name" => "lucid64",
-          "package_path" => "/tmp/rootfs_lucid64"
+          "name" => "cflinuxfs2",
+          "package_path" => "/tmp/rootfs_cflinuxfs2"
         }
       ],
       "placement_properties" => {

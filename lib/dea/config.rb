@@ -67,6 +67,8 @@ module Dea
             "zone" => String
           },
 
+          "cc_url" => String,
+
           optional("crash_lifetime_secs") => Integer,
           optional("crash_block_usage_ratio_threshold") => Float,
           optional("crash_inode_usage_ratio_threshold") => Float,
@@ -114,7 +116,11 @@ module Dea
             "memory_to_cpu_share_ratio" => Integer,
             "max_cpu_share_limit" => Integer,
             "min_cpu_share_limit" => Integer,
-            "disk_inode_limit" => Integer
+            "disk_inode_limit" => Integer,
+            optional("bandwidth_limit") => {
+              "rate" => Integer,
+              "burst" => Integer,
+            },
           },
 
           optional("staging") => {
@@ -124,12 +130,16 @@ module Dea
             optional("memory_limit_mb") => Integer,
             optional("disk_limit_mb") => Integer,
             optional("cpu_limit_shares") => Integer,
-            optional("http_proxy") => String
+            optional("http_proxy") => String,
+            optional("bandwidth_limit") => {
+              "rate" => Integer,
+              "burst" => Integer,
+            },
           },
 
           optional("firewalls") => {
-            optional("script") => String,
-            optional("args") => String
+              optional("script") => String,
+              optional("args") => String
           }
         }
       end
@@ -193,6 +203,14 @@ module Dea
 
     def instance_disk_inode_limit
       @config.fetch("instance", {}).fetch("disk_inode_limit", DEFAULT_INSTANCE_DISK_INODE_LIMIT)
+    end
+
+    def staging_bandwidth_limit
+      @config.fetch("staging", {})["bandwidth_limit"]
+    end
+
+    def instance_bandwidth_limit
+      @config.fetch("instance", {})["bandwidth_limit"]
     end
 
     def rootfs_path(stack_name)

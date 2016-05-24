@@ -71,11 +71,14 @@ module Dea
             end
           end
 
-          trigger_after_complete(error)
-
-          raise(error) if error
+          begin
+            trigger_after_complete(error)
+          rescue => e
+            logger.warn('staging.task.after_complete-failed', error: e, backtrace: e.backtrace)
+          end
         ensure
           promise_destroy.resolve
+          @container.close_all_connections if @container
           FileUtils.rm_rf(workspace.workspace_dir)
         end
       end
@@ -249,7 +252,7 @@ module Dea
     def promise_stage
       Promise.new do |p|
         script = staging_command
-        logger.debug('staging.task.execute-staging', script: script)
+        logger.debug('staging.task.execute-staging')
 
         spawn_response = container.spawn(script)
         @warden_job_id = spawn_response.job_id
@@ -538,6 +541,10 @@ module Dea
       }
     end
 
+    def warden_handle
+      container.handle
+    end
+
     private
 
     def staging_command
@@ -558,6 +565,13 @@ module Dea
       services.map { |svc_hash| svc_hash['syslog_drain_url'] }.compact
     end
 
+    def bandwidth_limit
+      limit = config.staging_bandwidth_limit
+      return nil unless limit
+
+      { rate: limit['rate'], burst: limit['burst'] }
+    end
+
     def resolve_staging_setup
       workspace.prepare(buildpack_manager)
       with_network = false
@@ -575,6 +589,7 @@ module Dea
         setup_inbound_network: with_network,
         egress_rules: staging_message.egress_rules,
         rootfs: rootfs,
+        limit_bandwidth: bandwidth_limit,
       )
       promises = [promise_app_download]
       promises << promise_buildpack_cache_download if staging_message.buildpack_cache_download_uri

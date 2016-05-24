@@ -170,46 +170,6 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
     end
   end
 
-  describe "pre-downloading admin buildpacks" do
-    let(:admin_buildpacks) do
-      [
-        {
-          "url" => "http://#{file_server_address}/admin_buildpacks/admin_buildpack",
-          "key" => "predownload1"
-        },
-        {
-          "url" => "http://#{file_server_address}/admin_buildpacks/start_command",
-          "key" => "predownload2"
-        }
-      ]
-    end
-
-    context "after a buildpacks message has been received and processed" do
-      def publish_buildpacks_announcement
-        nats.publish("buildpacks", admin_buildpacks)
-      end
-
-      it "downloads buildpacks to staging workspace" do
-        publish_buildpacks_announcement
-
-        within_n_seconds(20) do
-          expect(admin_buildpack_dir_size).to eq(2)
-        end
-      end
-
-      def within_n_seconds(n)
-        start = Time.now
-        begin
-          yield
-          sleep 1
-        rescue => e
-          raise e unless (Time.now - start) < n
-          retry
-        end
-      end
-    end
-  end
-
   def admin_buildpack_dir_size
     admin_buildpack_dir = File.join(dea_config["base_dir"], "admin_buildpacks")
     (dea_server.directory_entries(admin_buildpack_dir) - %w[. ..]).size
@@ -228,16 +188,6 @@ describe "Staging an app", :type => :integration, :requires_warden => true do
       response, staging_log = perform_stage_request(staging_message)
       expect(response["error"]).to be_nil
       expect(staging_log).to include("DISTRIB_CODENAME=trusty")
-    end
-
-    it 'compiles on lucid stack' do
-      staging_message['stack'] = 'lucid64'
-      buildpack_cache_file = File.join(FILE_SERVER_DIR, "buildpack_cache.tgz")
-      FileUtils.rm_rf(buildpack_cache_file)
-
-      response, staging_log = perform_stage_request(staging_message)
-      expect(response["error"]).to be_nil
-      expect(staging_log).to include("DISTRIB_CODENAME=lucid")
     end
   end
 

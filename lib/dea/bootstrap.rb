@@ -91,7 +91,6 @@ module Dea
       setup_directory_server_v2
       setup_directories
       setup_pid_file
-      setup_sweepers
     end
 
     def setup_varz
@@ -187,9 +186,9 @@ module Dea
     end
 
     def setup_loggregator
-      if @config["loggregator"] && @config["loggregator"]["router"] && @config["loggregator"]["shared_secret"]
-        Dea::Loggregator.emitter = LoggregatorEmitter::Emitter.new(@config["loggregator"]["router"], "DEA", @config["index"], @config["loggregator"]["shared_secret"])
-        Dea::Loggregator.staging_emitter = LoggregatorEmitter::Emitter.new(@config["loggregator"]["router"], "STG", @config["index"], @config["loggregator"]["shared_secret"])
+      if @config["loggregator"] && @config["loggregator"]["router"]
+        Dea::Loggregator.emitter = LoggregatorEmitter::Emitter.new(@config["loggregator"]["router"], "DEA", "DEA", @config["index"])
+        Dea::Loggregator.staging_emitter = LoggregatorEmitter::Emitter.new(@config["loggregator"]["router"], "DEA", "STG", @config["index"])
       end
     end
 
@@ -222,24 +221,6 @@ module Dea
       rescue => err
         logger.error("Cannot create pid file at #{path} (#{err})")
         raise
-      end
-    end
-
-    def setup_sweepers
-      # Heartbeats of instances we're managing
-      hb_interval = config["intervals"]["heartbeat"] || DEFAULT_HEARTBEAT_INTERVAL
-      @heartbeat_timer = EM.add_periodic_timer(hb_interval) { send_heartbeat }
-
-      # Ensure we keep around only the most recent crash for short amount of time
-      instance_registry.start_reaper
-
-      # Remove unreferenced droplets
-      EM.add_periodic_timer(DROPLET_REAPER_INTERVAL_SECS) do
-        reap_unreferenced_droplets
-      end
-
-      EM.add_periodic_timer(CONTAINER_REAPER_INTERVAL_SECS) do
-        reap_orphaned_containers
       end
     end
 
@@ -287,11 +268,10 @@ module Dea
         Dea::Responders::DeaLocator.new(nats, uuid, resource_manager, config),
         Dea::Responders::StagingLocator.new(nats, uuid, resource_manager, config),
         Dea::Responders::Staging.new(nats, uuid, self, staging_task_registry, directory_server_v2, resource_manager, config),
-        Dea::Responders::BuildpackDownloader.new(nats, config),
       ].each(&:start)
     end
 
-### /Setup_Stuff
+### /Start_Stuff
 
     def locator_responders
       return [] unless @responders
@@ -317,6 +297,24 @@ module Dea
       @uuid = VCAP::Component.uuid
     end
 
+    def setup_sweepers
+      # Heartbeats of instances we're managing
+      hb_interval = config["intervals"]["heartbeat"] || DEFAULT_HEARTBEAT_INTERVAL
+      @heartbeat_timer = EM.add_periodic_timer(hb_interval) { send_heartbeat }
+
+      # Ensure we keep around only the most recent crash for short amount of time
+      instance_registry.start_reaper
+
+      # Remove unreferenced droplets
+      EM.add_periodic_timer(DROPLET_REAPER_INTERVAL_SECS) do
+        reap_unreferenced_droplets
+      end
+
+      EM.add_periodic_timer(CONTAINER_REAPER_INTERVAL_SECS) do
+        reap_orphaned_containers
+      end
+    end
+
     def start_finish
       nats.publish("dea.start", Dea::Protocol::V1::HelloMessage.generate(self))
       locator_responders.map(&:advertise)
@@ -335,9 +333,12 @@ module Dea
     end
 
     def start
+      download_buildpacks
+
       snapshot.load
 
       start_component
+      setup_sweepers
       start_nats
       setup_register_routes
       directory_server_v2.start
@@ -495,6 +496,33 @@ module Dea
       logger.error('periodic.varz.failure', error: e, backtrace: e.backtrace)
     end
 
+    def download_buildpacks
+      return unless config['staging'] && config['staging']['enabled']
+
+      buildpacks_url = URI::join(config['cc_url'], '/internal/buildpacks')
+      http = EM::HttpRequest.new(buildpacks_url, :connect_timeout => 5).get
+      http.errback do
+        logger.error("buildpacks-request.error", error: http.error)
+      end
+
+      http.callback do
+        begin
+          http_status = http.response_header.status
+          if http_status == 200
+            workspace = StagingTaskWorkspace.new(config['base_dir'], nil)
+            Fiber.new do
+              AdminBuildpackDownloader.new(BuildpacksMessage.new(MultiJson.load(http.response)).buildpacks, workspace.admin_buildpacks_dir).download
+            end.resume
+            logger.info('buildpacks-downloaded.success')
+          else
+            logger.warn('buildpacks-request.failed', status: http_status)
+          end
+        rescue => e
+          logger.error("em-download.failed", error: e, backtrace: e.backtrace)
+        end
+      end
+    end
+
     private
 
     def logger
@@ -502,3 +530,4 @@ module Dea
     end
   end
 end
+
