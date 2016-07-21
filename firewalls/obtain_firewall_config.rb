@@ -1,6 +1,8 @@
 #!/usr/bin/env ruby
 require 'yaml'
 
+STDOUT.sync = true
+
 def main()
   firewall_env = ARGV[0]
 
