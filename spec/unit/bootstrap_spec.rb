@@ -33,8 +33,31 @@ describe Dea::Bootstrap do
 
   let(:nats_client_mock) do
     nats_client_mock = double("nats_client").as_null_object
-    nats_client_mock.stub(:flush) { |&blk| blk.call }
+    allow(nats_client_mock).to receive(:flush) { |&blk| blk.call }
     nats_client_mock
+  end
+
+  describe '#setup' do
+    it 'sets up the appropriate components' do
+      expect(bootstrap).to receive(:validate_config)
+      expect(SecureRandom).to receive(:uuid)
+      expect(bootstrap).to receive(:setup_nats)
+      expect(bootstrap).to receive(:setup_logging)
+      expect(bootstrap).to receive(:setup_loggregator)
+      expect(bootstrap).to receive(:setup_warden_container_lister)
+      expect(bootstrap).to receive(:setup_droplet_registry)
+      expect(bootstrap).to receive(:setup_instance_registry)
+      expect(bootstrap).to receive(:setup_staging_task_registry)
+      expect(bootstrap).to receive(:setup_instance_manager)
+      expect(bootstrap).to receive(:setup_snapshot)
+      expect(bootstrap).to receive(:setup_resource_manager)
+      expect(bootstrap).to receive(:setup_router_client)
+      expect(bootstrap).to receive(:setup_directory_server_v2)
+      expect(bootstrap).to receive(:setup_directories)
+      expect(bootstrap).to receive(:setup_pid_file)
+
+      bootstrap.setup
+    end
   end
 
   describe "logging setup" do
@@ -43,28 +66,43 @@ describe Dea::Bootstrap do
     it "should use a file sink when specified" do
       @config = { "logging" => { "file" => File.join(tmpdir, "out.log") } }
 
-      Steno.should_receive(:init).with do |config|
-        config.sinks.any? do |sink|
-          sink.kind_of?(Steno::Sink::IO)
-        end.should == true
+      allow(Steno).to receive(:init) do |config|
+        expect(
+          config.sinks.any? do |sink|
+            sink.kind_of?(Steno::Sink::IO)
+          end
+        ).to be true
       end
     end
 
     it "should use a syslog sink when specified" do
       @config = { "logging" => { "syslog" => "ident" } }
 
-      Steno.should_receive(:init).with do |config|
-        config.sinks.any? do |sink|
-          sink.kind_of?(Steno::Sink::Syslog)
-        end.should == true
+      allow(Steno).to receive(:init) do |config|
+        expect(
+          config.sinks.any? do |sink|
+            sink.kind_of?(Steno::Sink::Syslog)
+          end
+        ).to be true
       end
     end
 
     it "should set the default log level when specified" do
-      @config = { "logging" => { "level" => "debug" } }
+      @config = { 'logging' => { 'level' => 'debug' } }
 
-      Steno.should_receive(:init).with do |config|
-        config.default_log_level.should == :debug
+      allow(Steno).to receive(:init) do |config|
+        expect(config.default_log_level).to eq(:debug)
+      end
+    end
+
+    it 'sets up a log counter sink' do
+      log_counter = Steno::Sink::Counter.new
+      allow(Steno::Sink::Counter).to receive(:new).once.and_return(log_counter)
+
+      allow(bootstrap).to receive(:nats).and_return(nats_client_mock)
+
+      allow(Steno).to receive(:init) do |steno_config|
+        expect(steno_config.sinks).to include log_counter
       end
     end
 
@@ -72,8 +110,8 @@ describe Dea::Bootstrap do
       @config = { "logging" => { "level" => "debug" } }
 
       logger = double("logger")
-      bootstrap.should_receive(:logger).and_return(logger)
-      logger.should_receive(:info).with("Dea started")
+      allow(bootstrap).to receive(:logger).and_return(logger)
+      allow(logger).to receive(:info).with("Dea started")
     end
   end
 
@@ -82,8 +120,8 @@ describe Dea::Bootstrap do
     it "should configure when router is valid" do
       @config = { "index" => 0, "loggregator" => { "router" => "localhost:5432" } }
 
-      LoggregatorEmitter::Emitter.should_receive(:new).with("localhost:5432", "DEA", "DEA", 0)
-      LoggregatorEmitter::Emitter.should_receive(:new).with("localhost:5432", "DEA", "STG", 0)
+      allow(LoggregatorEmitter::Emitter).to receive(:new).with("localhost:5432", "DEA", "DEA", 0)
+      allow(LoggregatorEmitter::Emitter).to receive(:new).with("localhost:5432", "DEA", "STG", 0)
       bootstrap.setup_loggregator
     end
 
@@ -105,7 +143,7 @@ describe Dea::Bootstrap do
     it "should create a new warden container to be used to send .list requests for varz updates" do
       expect(WardenClientProvider).to receive(:new).with("123")
       bootstrap.setup_warden_container_lister
-      bootstrap.warden_container_lister.should be_a(Container)
+      expect(bootstrap.warden_container_lister).to be_a(Container)
     end
   end
 
@@ -113,8 +151,8 @@ describe Dea::Bootstrap do
     before { bootstrap.setup_droplet_registry }
 
     it "should create a new droplet registry" do
-      bootstrap.droplet_registry.should be_a(Dea::DropletRegistry)
-      bootstrap.droplet_registry.base_dir.should == File.join(@config["base_dir"], "droplets")
+      expect(bootstrap.droplet_registry).to be_a(Dea::DropletRegistry)
+      expect(bootstrap.droplet_registry.base_dir).to eq(File.join(@config["base_dir"], "droplets"))
     end
   end
 
@@ -122,7 +160,7 @@ describe Dea::Bootstrap do
     before { bootstrap.setup_instance_registry }
 
     it "should create a new instance registry" do
-      bootstrap.instance_registry.should be_a(Dea::InstanceRegistry)
+      expect(bootstrap.instance_registry).to be_a(Dea::InstanceRegistry)
     end
   end
 
@@ -133,7 +171,7 @@ describe Dea::Bootstrap do
       }.to change { bootstrap.staging_task_registry }.from(nil)
 
       bootstrap.staging_task_registry.tap do |r|
-        r.should be_a(Dea::StagingTaskRegistry)
+        expect(r).to be_a(Dea::StagingTaskRegistry)
       end
     end
   end
@@ -145,7 +183,7 @@ describe Dea::Bootstrap do
 
     %W(db droplets instances tmp).each do |dir|
       it "should create '#{dir}'" do
-        File.directory?(File.join(tmpdir, dir)).should be_true
+        expect(File.directory?(File.join(tmpdir, dir))).to be true
       end
     end
   end
@@ -157,7 +195,7 @@ describe Dea::Bootstrap do
       bootstrap.setup_pid_file
 
       pid = File.read(pid_filename).chomp.to_i
-      pid.should == Process.pid
+      expect(pid).to eq(Process.pid)
     end
 
     it "should raise when it can't create the pid file" do
@@ -165,7 +203,7 @@ describe Dea::Bootstrap do
         pid_filename = File.join(tmpdir, "doesnt_exist", "pid")
         bootstrap = Dea::Bootstrap.new("pid_filename" => pid_filename)
         bootstrap.setup_pid_file
-      end.to raise_error
+      end.to raise_error Errno::ENOENT
     end
   end
 
@@ -174,7 +212,7 @@ describe Dea::Bootstrap do
       droplet_registry = {}
       ["a", "b", "c", "d", "e", "f"].each do |sha|
         droplet_registry[sha] = double("droplet_#{sha}")
-        droplet_registry[sha].stub(:destroy)
+        allow(droplet_registry[sha]).to receive(:destroy)
       end
       droplet_registry
     end
@@ -183,7 +221,7 @@ describe Dea::Bootstrap do
       instance_registry = []
       ["a", "b"].each do |sha|
         instance_registry << double("instance_#{sha}")
-        instance_registry.last.stub(:droplet_sha1).and_return(sha)
+        allow(instance_registry.last).to receive(:droplet_sha1).and_return(sha)
       end
       instance_registry
     end
@@ -192,7 +230,7 @@ describe Dea::Bootstrap do
       staging_task_registry= []
       ["e", "f"].each do |sha|
         staging_task_registry << double("staging_task_#{sha}")
-        staging_task_registry.last.stub(:droplet_sha1).and_return(sha)
+        allow(staging_task_registry.last).to receive(:droplet_sha1).and_return(sha)
       end
       staging_task_registry
     end
@@ -206,19 +244,19 @@ describe Dea::Bootstrap do
     end
 
     before do
-      bootstrap.stub(:instance_registry).and_return(instance_registry)
-      bootstrap.stub(:staging_task_registry).and_return(staging_task_registry)
-      bootstrap.stub(:droplet_registry).and_return(droplet_registry)
+      allow(bootstrap).to receive(:instance_registry).and_return(instance_registry)
+      allow(bootstrap).to receive(:staging_task_registry).and_return(staging_task_registry)
+      allow(bootstrap).to receive(:droplet_registry).and_return(droplet_registry)
     end
 
     it "should delete any unreferenced droplets from the registry" do
       bootstrap.reap_unreferenced_droplets
-      bootstrap.droplet_registry.keys.should == referenced_shas
+      expect(bootstrap.droplet_registry.keys).to eq(referenced_shas)
     end
 
     it "should destroy any unreferenced droplets" do
       unreferenced_shas.each do |sha|
-        droplet_registry[sha].should_receive(:destroy)
+        allow(droplet_registry[sha]).to receive(:destroy)
       end
       bootstrap.reap_unreferenced_droplets
     end
@@ -236,7 +274,7 @@ describe Dea::Bootstrap do
       instance_registry = []
       ["a"].each do |warden_handle|
         instance_registry << double("instance_#{warden_handle}")
-        instance_registry.last.stub(:warden_handle).and_return(warden_handle)
+        allow(instance_registry.last).to receive(:warden_handle).and_return(warden_handle)
       end
       instance_registry
     end
@@ -245,7 +283,7 @@ describe Dea::Bootstrap do
       staging_task_registry= []
       ["c"].each do |warden_handle|
         staging_task_registry << double("staging_task_#{warden_handle}")
-        staging_task_registry.last.stub(:warden_handle).and_return(warden_handle)
+        allow(staging_task_registry.last).to receive(:warden_handle).and_return(warden_handle)
       end
       staging_task_registry
     end
@@ -254,17 +292,17 @@ describe Dea::Bootstrap do
       bootstrap.setup_warden_container_lister
       bootstrap.setup_warden_container_lister
       allow(bootstrap.warden_container_lister).to receive(:list).and_return list_response
-      bootstrap.stub(:instance_registry).and_return(instance_registry)
-      bootstrap.stub(:staging_task_registry).and_return(staging_task_registry)
+      allow(bootstrap).to receive(:instance_registry).and_return(instance_registry)
+      allow(bootstrap).to receive(:staging_task_registry).and_return(staging_task_registry)
     end
 
     it "should not reap orphaned containers on the first time" do
       with_event_machine do
-        warden_containers.should_not_receive(:handle=).with('a')
-        warden_containers.should_not_receive(:handle=).with('b')
-        warden_containers.should_not_receive(:handle=).with('c')
-        warden_containers.should_not_receive(:handle=).with('d')
-        warden_containers.should_not_receive(:destroy!)
+        expect(warden_containers).to_not receive(:handle=).with('a')
+        expect(warden_containers).to_not receive(:handle=).with('b')
+        expect(warden_containers).to_not receive(:handle=).with('c')
+        expect(warden_containers).to_not receive(:handle=).with('d')
+        expect(warden_containers).to_not receive(:destroy!)
         bootstrap.reap_orphaned_containers
 
         after_defers_finish do
@@ -275,14 +313,14 @@ describe Dea::Bootstrap do
 
     it "should reap orphaned containers if they remain orphan for two ticks" do
       with_event_machine do
-        warden_containers.should_not_receive(:handle=).with('a')
-        warden_containers.should_not_receive(:handle=).with('c')
-        warden_containers.should_not_receive(:handle=).with('d')
-        warden_containers.should_receive(:handle=).with('b')
-        warden_containers.should_receive(:destroy!)
+        expect(warden_containers).to_not receive(:handle=).with('a')
+        expect(warden_containers).to_not receive(:handle=).with('c')
+        expect(warden_containers).to_not receive(:handle=).with('d')
+        allow(warden_containers).to receive(:handle=).with('b')
+        allow(warden_containers).to receive(:destroy!)
         bootstrap.reap_orphaned_containers
         instance_registry << double("instance_d")
-        instance_registry.last.stub(:warden_handle).and_return("d")
+        allow(instance_registry.last).to receive(:warden_handle).and_return("d")
         bootstrap.reap_orphaned_containers
 
         after_defers_finish do
@@ -292,11 +330,11 @@ describe Dea::Bootstrap do
     end
 
     it "is resistant to errors" do
-      warden_containers.stub(:list).and_raise("error happened")
+      allow(warden_containers).to receive(:list).and_raise("error happened")
       logger = double("logger")
-      bootstrap.should_receive(:logger).at_least(:once).and_return(logger)
+      allow(bootstrap).to receive(:logger).at_least(:once).and_return(logger)
       allow(logger).to receive(:debug)
-      logger.should_receive(:error).with("error happened")
+      allow(logger).to receive(:error).with("error happened")
 
       with_event_machine do
         bootstrap.reap_orphaned_containers
@@ -308,200 +346,65 @@ describe Dea::Bootstrap do
     end
   end
 
-  describe "start_component" do
-    it "adds stacks to varz" do
-      @config["stacks"] = [{ "name" => "Linux" }]
+  describe '#start_metrics' do
+    it 'sets up a periodic timer' do
+      expect(bootstrap).to receive(:periodic_metrics_emit)
+      expect(EM).to receive(:add_periodic_timer).with(10) { |&block| block.call }
 
-      bootstrap.stub(:nats).and_return(nats_client_mock)
+      begin
+        with_event_machine do
+          bootstrap.start_metrics
 
-      # stubbing this to avoid a runtime exception
-      EM.stub(:add_periodic_timer)
-
-      bootstrap.setup_varz
-
-      VCAP::Component.varz[:stacks].should == ["Linux"]
+          after_defers_finish do
+            done
+          end
+        end
+      end
     end
   end
 
-  describe "#periodic_varz_update" do
+  describe '#periodic_metrics_emit' do
     before do
-      bootstrap.setup_resource_manager
-      bootstrap.setup_warden_container_lister
+      @emitter = FakeEmitter.new
+      @staging_emitter = FakeEmitter.new
+      Dea::Loggregator.emitter = @emitter
+      Dea::Loggregator.staging_emitter = @staging_emitter
+
       bootstrap.setup_instance_registry
-      bootstrap.config.stub(:minimum_staging_memory_mb => 333)
-      bootstrap.config.stub(:minimum_staging_disk_mb => 444)
-      bootstrap.resource_manager.stub(number_reservable: 0,
-        available_disk_ratio: 0,
-        available_memory_ratio: 0)
-      allow(bootstrap.warden_container_lister).to receive(:list).and_return list_response
+      bootstrap.setup_resource_manager
+
+      allow(bootstrap.instance_registry).to receive(:size).and_return(5)
+      allow(bootstrap.resource_manager).to receive(:remaining_memory).and_return(115)
+      allow(bootstrap.resource_manager).to receive(:remaining_disk).and_return(666)
     end
 
-    let(:list_response) do
-      Warden::Protocol::ListResponse.new(
-        :handles => []
-      )
-    end
+    it 'emits the correct metrics' do
+      expect(bootstrap.instance_registry).to receive(:emit_container_stats)
+      bootstrap.periodic_metrics_emit
 
-    describe "can_stage" do
-      it "is 0 when there is not enough free memory or disk space" do
-        bootstrap.resource_manager.stub(:number_reservable).and_return(0)
-        bootstrap.periodic_varz_update
+      expect(@emitter.messages['remaining_memory'].length).to eq(1)
+      expect(@emitter.messages['remaining_memory'][0][:value]).to eq(115)
+      expect(@emitter.messages['remaining_memory'][0][:unit]).to eq('mb')
 
-        VCAP::Component.varz[:can_stage].should == 0
-      end
+      expect(@emitter.messages['remaining_disk'].length).to eq(1)
+      expect(@emitter.messages['remaining_disk'][0][:value]).to eq(666)
+      expect(@emitter.messages['remaining_disk'][0][:unit]).to eq('mb')
 
-      it "is 1 when there is enough memory and disk space" do
-        bootstrap.resource_manager.stub(:number_reservable).and_return(3)
-        bootstrap.periodic_varz_update
-
-        VCAP::Component.varz[:can_stage].should == 1
-      end
-    end
-
-    describe "reservable_stagers" do
-      it "uses the value from resource_manager#number_reservable" do
-        bootstrap.resource_manager.stub(:number_reservable).with(333, 444).and_return(456)
-        bootstrap.periodic_varz_update
-
-        VCAP::Component.varz[:reservable_stagers].should == 456
-      end
-    end
-
-    describe "available_memory_ratio" do
-      it "uses the value from resource_manager#available_memory_ratio" do
-        bootstrap.resource_manager.stub(:available_memory_ratio).and_return(0.5)
-        bootstrap.periodic_varz_update
-
-        VCAP::Component.varz[:available_memory_ratio].should == 0.5
-      end
-    end
-
-    describe "available_disk_ratio" do
-      it "uses the value from resource_manager#available_memory_ratio" do
-        bootstrap.resource_manager.stub(:available_disk_ratio).and_return(0.75)
-        bootstrap.periodic_varz_update
-
-        VCAP::Component.varz[:available_disk_ratio].should == 0.75
-      end
-    end
-
-    describe "warden_containers" do
-      context "when there are no containers" do
-        it "is an empty array" do
-          bootstrap.periodic_varz_update
-          VCAP::Component.varz[:warden_containers].should == []
-        end
-      end
-
-      context "with an active container" do
-        let(:list_response) do
-          Warden::Protocol::ListResponse.new(
-            :handles => ["ahandle", "anotherhandle"])
-        end
-
-        it "is a hash with keys matching the container guid" do
-          bootstrap.periodic_varz_update
-          VCAP::Component.varz[:warden_containers].should == ["ahandle", "anotherhandle"]
-        end
-      end
-
-      context 'when the warden client is disconnected' do
-        before do
-          allow(bootstrap.warden_container_lister).to receive(:list).and_raise(::EM::Warden::Client::ConnectionError.new)
-        end
-
-        it 'should not explode' do
-          expect {
-            bootstrap.periodic_varz_update
-          }.not_to raise_error
-        end
-      end
-    end
-
-    describe "instance_registry" do
-      let(:instance_1) do
-        Dea::Instance.new(bootstrap, "application_id" => "app-1")
-      end
-
-      let(:instance_2) do
-        Dea::Instance.new(bootstrap, "application_id" => "app-1")
-      end
-
-      context "when an empty registry" do
-        it "is an empty hash" do
-          bootstrap.periodic_varz_update
-
-          VCAP::Component.varz[:instance_registry].should == {}
-        end
-      end
-
-      context "with a registry with an instance of an app" do
-        around { |example| Timecop.freeze(&example) }
-
-        before do
-          bootstrap.instance_registry.register(instance_1)
-        end
-
-        it "inlines the instance registry grouped by app ID" do
-          bootstrap.periodic_varz_update
-
-          varz = VCAP::Component.varz[:instance_registry]
-
-          varz.keys.should == ["app-1"]
-          varz["app-1"][instance_1.instance_id].should include(
-            "state" => "BORN",
-            "state_timestamp" => Time.now.to_f
-          )
-        end
-
-        it "uses the values from stat_collector" do
-          instance_1.stat_collector.stub(:used_memory_in_bytes).and_return(999)
-          instance_1.stat_collector.stub(:used_disk_in_bytes).and_return(40)
-          instance_1.stat_collector.stub(:computed_pcpu).and_return(0.123)
-
-          bootstrap.periodic_varz_update
-
-          varz = VCAP::Component.varz[:instance_registry]
-
-          varz.keys.should == ["app-1"]
-          varz["app-1"][instance_1.instance_id].should include(
-            "used_memory_in_bytes" => 999,
-            "used_disk_in_bytes" => 40,
-            "computed_pcpu" => 0.123
-          )
-        end
-      end
-
-      context "with a registry containing two instances of one app" do
-        before do
-          bootstrap.instance_registry.register(instance_1)
-          bootstrap.instance_registry.register(instance_2)
-        end
-
-        it "inlines the instance registry grouped by app ID" do
-          bootstrap.periodic_varz_update
-
-          varz = VCAP::Component.varz[:instance_registry]
-
-          varz.keys.should == ["app-1"]
-          varz["app-1"].keys.should =~ [
-            instance_1.instance_id,
-            instance_2.instance_id
-          ]
-        end
-      end
+      expect(@emitter.messages['instances'].length).to eq(1)
+      expect(@emitter.messages['instances'][0][:value]).to eq(5)
+      expect(@emitter.messages['instances'][0][:unit]).to eq('instances')
     end
   end
 
   describe "#start_nats" do
     before do
-      EM.stub(:add_periodic_timer)
-      bootstrap.stub(:uuid => "unique-dea-id")
+      allow(EM).to receive(:add_periodic_timer)
+      allow(bootstrap).to receive(:uuid).and_return("unique-dea-id")
       bootstrap.setup_nats
     end
 
     it "starts nats" do
-      bootstrap.nats.should_receive(:start)
+      allow(bootstrap.nats).to receive(:start)
       bootstrap.start_nats
     end
 
@@ -511,54 +414,24 @@ describe Dea::Bootstrap do
       bootstrap.start_nats
 
       responder = bootstrap.responders.detect { |r| r.is_a?(Dea::Responders::Staging) }
-      responder.should_not be_nil
+      expect(responder).to_not be_nil
 
       responder.tap do |r|
-        r.nats.should be_a(Dea::Nats)
-        r.dea_id.should be_a(String)
-        r.bootstrap.should == bootstrap
-        r.staging_task_registry.should be_a(Dea::StagingTaskRegistry)
-        r.dir_server.should be_a(Dea::DirectoryServerV2)
-        r.config.should be_a(Dea::Config)
-      end
-    end
-
-    it "sets up dea locator responder to respond to 'dea.locate' and send out 'dea.advertise'" do
-      bootstrap.setup_resource_manager
-      bootstrap.start_nats
-
-      responder = bootstrap.responders.detect { |r| r.is_a?(Dea::Responders::DeaLocator) }
-      responder.should_not be_nil
-
-      responder.tap do |r|
-        r.nats.should be_a(Dea::Nats)
-        r.dea_id.should be_a(String)
-        r.resource_manager.should be_a(Dea::ResourceManager)
-        r.config.should be_a(Dea::Config)
-      end
-    end
-
-    it "sets up staging locator responder to respond to 'staging.locate' and send out 'staging.advertise'" do
-      bootstrap.setup_resource_manager
-      bootstrap.start_nats
-
-      responder = bootstrap.responders.detect { |r| r.is_a?(Dea::Responders::StagingLocator) }
-      responder.should_not be_nil
-
-      responder.tap do |r|
-        r.nats.should be_a(Dea::Nats)
-        r.dea_id.should be_a(String)
-        r.resource_manager.should be_a(Dea::ResourceManager)
-        r.config.should be_a(Dea::Config)
+        expect(r.nats).to be_a(Dea::Nats)
+        expect(r.dea_id).to be_a(String)
+        expect(r.bootstrap).to eq(bootstrap)
+        expect(r.staging_task_registry).to be_a(Dea::StagingTaskRegistry)
+        expect(r.dir_server).to be_a(Dea::DirectoryServerV2)
+        expect(r.config).to be_a(Dea::Config)
       end
     end
   end
 
   describe "#start_finish" do
-    before { EM.stub(:add_periodic_timer => nil, :add_timer => nil) }
-
     before do
-      bootstrap.stub(:uuid => "unique-dea-id")
+      allow(EM).to receive(:add_periodic_timer).and_return(nil)
+      allow(EM).to receive(:add_timer).and_return(nil)
+      allow(bootstrap).to receive(:uuid).and_return("unique-dea-id")
       bootstrap.setup_nats
       bootstrap.setup_instance_registry
       bootstrap.setup_staging_task_registry
@@ -567,12 +440,12 @@ describe Dea::Bootstrap do
     end
 
     it "advertises dea" do
-      Dea::Responders::DeaLocator.any_instance.should_receive(:advertise)
+      allow_any_instance_of(Dea::Responders::DeaLocator).to receive(:advertise)
       bootstrap.start_finish
     end
 
     it "advertises staging" do
-      Dea::Responders::StagingLocator.any_instance.should_receive(:advertise)
+      allow_any_instance_of(Dea::Responders::StagingLocator).to receive(:advertise)
       bootstrap.start_finish
     end
 
@@ -590,27 +463,55 @@ describe Dea::Bootstrap do
       end
 
       it "heartbeats its registry" do
-        bootstrap.should_receive(:send_heartbeat)
+        allow(bootstrap).to receive(:send_heartbeat)
         bootstrap.start_finish
       end
     end
   end
 
-  describe "counting logs" do
-    it "registers a log counter with the component" do
-      log_counter = Steno::Sink::Counter.new
-      Steno::Sink::Counter.should_receive(:new).once.and_return(log_counter)
+  describe '#start_app' do
+    let(:instance_data) { double('data') }
+    let(:instance) { double("instance", :start => nil) }
+    let(:evac_handler) { double('evac_handler', evacuating?: false) }
+    let(:shutdown_handler) { double('shutdown_handler', shutting_down?: false) }
 
-      VCAP::Component.stub(:uuid)
-      bootstrap.stub(:nats).and_return(nats_client_mock)
+    before do
+      allow(bootstrap).to receive(:evac_handler).and_return(evac_handler)
+      allow(bootstrap).to receive(:shutdown_handler).and_return(shutdown_handler)
+      bootstrap.setup_signal_handlers
+      bootstrap.setup_instance_manager
+    end
 
-      Steno.should_receive(:init) do |steno_config|
-        expect(steno_config.sinks).to include log_counter
+    it "creates and starts an instance" do
+      expect(bootstrap.instance_manager).to receive(:create_instance).with(instance_data).and_return(instance)
+      expect(instance).to receive(:start)
+      bootstrap.start_app(instance_data)
+    end
+
+    context 'when no instance is created' do
+      it 'does not start an instance' do
+        expect(bootstrap.instance_manager).to receive(:create_instance).with(instance_data).and_return(nil)
+        expect(instance).not_to receive(:start)
+        bootstrap.start_app(instance_data)
       end
+    end
 
-      VCAP::Component.should_receive(:register).with(hash_including(:log_counter => log_counter))
-      subject.setup_logging
-      subject.start_component
+    context 'when evacuating' do
+      let(:evac_handler) { double('evac_handler', evacuating?: true) }
+
+      it 'does not create an instance' do
+        expect(bootstrap.instance_manager).not_to receive(:create_instance)
+        bootstrap.start_app(instance_data)
+      end
+    end
+
+    context 'when shutting down' do
+      let(:shutdown_handler) { double('shutdown_handler', shutting_down?: true) }
+
+      it 'does not create an instance' do
+        expect(bootstrap.instance_manager).not_to receive(:create_instance)
+        bootstrap.start_app(instance_data)
+      end
     end
   end
 
@@ -625,12 +526,13 @@ describe Dea::Bootstrap do
     let(:instance) { double("instance", :start => nil) }
 
     before do
+      bootstrap.setup_signal_handlers
       bootstrap.setup_instance_manager
     end
 
     it "creates an instance" do
-      bootstrap.instance_manager.should_receive(:create_instance).with(instance_data).and_return(instance)
-      instance.should_receive(:start)
+      allow(bootstrap.instance_manager).to receive(:create_instance).with(instance_data).and_return(instance)
+      allow(instance).to receive(:start)
       bootstrap.handle_dea_directed_start(Dea::Nats::Message.new(nil, nil, instance_data, nil))
     end
   end
@@ -718,28 +620,36 @@ describe Dea::Bootstrap do
     end
   end
 
-  describe "start" do
-    before do
-      bootstrap.stub(:download_buildpacks)
-      bootstrap.stub(:snapshot) { double(:snapshot, :load => nil) }
-      bootstrap.stub(:start_component)
-      bootstrap.stub(:setup_sweepers)
-      bootstrap.stub(:start_nats)
-      bootstrap.stub(:start_directory_server)
-      bootstrap.stub(:register_directory_server_v2)
-      bootstrap.stub(:directory_server_v2) { double(:directory_server_v2, :start => nil) }
-      bootstrap.stub(:setup_register_routes)
-      bootstrap.stub(:setup_varz)
-      bootstrap.stub(:start_finish)
+  describe '#start' do
+    it 'starts up the appropriate DEA subcomponents' do
+      expect(bootstrap).to receive(:snapshot) { double(:snapshot, :load => nil) }
+      expect(bootstrap).to receive(:download_buildpacks)
+      expect(bootstrap).to receive(:setup_sweepers)
+      expect(bootstrap).to receive(:start_nats)
+      expect(bootstrap).to receive(:directory_server_v2) { double(:directory_server_v2, :start => nil) }
+      expect(bootstrap).to receive(:setup_register_routes)
+      expect(bootstrap).to receive(:start_finish)
+      expect(bootstrap).to receive(:start_metrics)
+
+      bootstrap.start
     end
 
     describe "snapshot" do
       before do
-        bootstrap.unstub(:snapshot)
+        allow(bootstrap).to receive(:snapshot) { double(:snapshot, :load => nil) }
+        allow(bootstrap).to receive(:download_buildpacks)
+        allow(bootstrap).to receive(:setup_sweepers)
+        allow(bootstrap).to receive(:start_nats)
+        allow(bootstrap).to receive(:directory_server_v2) { double(:directory_server_v2, :start => nil) }
+        allow(bootstrap).to receive(:setup_register_routes)
+        allow(bootstrap).to receive(:start_finish)
+        allow(bootstrap).to receive(:start_metrics)
+        allow(bootstrap).to receive(:snapshot).and_call_original
       end
 
       it "loads the snapshot on startup" do
-        Dea::Snapshot.any_instance.should_receive(:load)
+        expect_any_instance_of(Dea::Snapshot).to receive(:load)
+
 
         bootstrap.setup_snapshot
         bootstrap.start
@@ -749,7 +659,8 @@ describe Dea::Bootstrap do
 
   describe "send_heartbeat" do
     before do
-      EM.stub(:add_periodic_timer => nil, :add_timer => nil)
+      allow(EM).to receive(:add_periodic_timer).and_return(nil)
+      allow(EM).to receive(:add_timer).and_return(nil)
       bootstrap.setup_nats
       bootstrap.start_nats
     end

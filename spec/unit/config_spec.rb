@@ -5,14 +5,32 @@ module Dea
   describe Config do
 
     subject(:config) { described_class.new(config_hash) }
+    let(:config_hash) do
+      {
+        "base_dir" => "dir",
+        "logging" => {
+          "level" => "level"
+        },
+        "nats_servers" => ["nats_server1"],
+        "pid_filename" => "pid_filename",
+        "warden_socket" => "socket",
+        "index" => 0,
+        "directory_server" => {
+          "protocol" => "protocol",
+          "v2_port" => 7,
+          "file_api_port" => 8
+        },
+        "cc_url" => "cc.example.com"
+      }
+    end
     let(:disk_inode_limit) { 123456 }
 
     describe ".from_file" do
       let(:file_path) { File.expand_path("../../../config/dea.yml", __FILE__) }
-      subject { described_class.from_file(file_path) }
+      subject { Dea::Config.from_file(file_path) }
 
       it "can load" do
-        should be_a(described_class)
+        expect(subject).to be_a(Dea::Config)
       end
     end
 
@@ -20,7 +38,7 @@ module Dea
       let(:config_hash) { { } }
 
       it "can load" do
-        should be_a(described_class)
+        expect(subject).to be_a(Dea::Config)
       end
 
       describe "the available keys and values" do
@@ -32,11 +50,11 @@ module Dea
         end
 
         it "has the expected default keys" do
-          config_as_hash.keys.should eq(Config::EMPTY_CONFIG.keys)
+          expect(config_as_hash.keys).to eq(Config::EMPTY_CONFIG.keys)
         end
 
         it "has the expected default values" do
-          config_as_hash.values.should eq(Config::EMPTY_CONFIG.values)
+          expect(config_as_hash.values).to eq(Config::EMPTY_CONFIG.values)
         end
       end
     end
@@ -46,7 +64,7 @@ module Dea
         let(:config_hash) { { } }
 
         it "has a sane default" do
-          config["placement_properties"].should == { "zone" => "default" }
+          expect(config["placement_properties"]).to eq({ "zone" => "default" })
         end
       end
 
@@ -54,7 +72,7 @@ module Dea
         let(:config_hash) { { "placement_properties" => { "zone" => "CRAZY_TOWN" } } }
 
         it "uses the zone provided by the hash" do
-          config["placement_properties"].should == { "zone" => "CRAZY_TOWN" }
+          expect(config["placement_properties"]).to eq({ "zone" => "CRAZY_TOWN" })
         end
       end
     end
@@ -122,6 +140,25 @@ module Dea
       end
     end
 
+    describe "#instance_nproc_limit" do
+      context "when the config hash has no key for nproc limit" do
+        let(:config_hash) { { "instance" => { } } }
+
+        it "is set to the default" do
+          expect(config.instance_nproc_limit).to eq(described_class::DEFAULT_INSTANCE_NPROC_LIMIT)
+        end
+      end
+
+      context "when the config hash has nproc_limit defined" do
+        let(:nproc_limit) { 1024 }
+        let(:config_hash) { { "instance" => { "nproc_limit" => nproc_limit } } }
+
+        it "returns the nproc limit" do
+          expect(config.instance_nproc_limit).to eq(nproc_limit)
+        end
+      end
+    end
+
     describe "#staging_bandwidth_limit" do
       context "when the config hash does not have a staging bandwidth limit" do
         let(:config_hash) { { "staging" => {} } }
@@ -173,16 +210,16 @@ module Dea
         context "when the interval is zero" do
           let(:config_hash) { { "intervals" => { "router_register_in_seconds" => 0 } } }
 
-          it "is valid" do
-            expect { config.validate_router_register_interval! }.to raise_error
+          it "is not valid" do
+            expect { config.validate_router_register_interval! }.to raise_error 'Invalid router register interval'
           end
         end
 
         context "when the interval is negative" do
           let(:config_hash) { { "intervals" => { "router_register_in_seconds" => -5 } } }
 
-          it "is valid" do
-            expect { config.validate_router_register_interval! }.to raise_error
+          it "is not valid" do
+            expect { config.validate_router_register_interval! }.to raise_error 'Invalid router register interval'
           end
         end
       end
@@ -193,6 +230,27 @@ module Dea
         it "is sets it to the default value" do
           expect { config.validate_router_register_interval! }.to_not raise_error
           expect(config["intervals"]["router_register_in_seconds"]).to eq(20)
+        end
+      end
+    end
+
+    describe "post_setup_hook" do
+      it 'returns nil when not set' do
+        expect(config.post_setup_hook).to be_nil
+      end
+
+      it 'returns the value when set' do
+        config_hash["post_setup_hook"] = 'the-value'
+        expect(config.post_setup_hook).to eq('the-value')
+      end
+
+      context "when it is not a string" do
+        before do
+          config_hash["post_setup_hook"] = 7
+        end
+
+        it "is not valid" do
+          expect { config.validate }.to raise_error Membrane::SchemaValidationError
         end
       end
     end

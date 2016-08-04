@@ -70,7 +70,8 @@ describe "Deterministic Evacuation", :type => :integration, :requires_warden => 
     expect(dea_server).to_not be_terminated
 
     setup_fake_buildpack("start_command")
-    nats.make_blocking_request("staging", staging_message, 2)
+    stager_id = get_stager_id
+    nats.make_blocking_request("staging.#{stager_id}.start", staging_message, 2)
 
     wait_until_instance_started(app_id)
 
@@ -82,8 +83,6 @@ describe "Deterministic Evacuation", :type => :integration, :requires_warden => 
 
     nats.publish("dea.stop", {"droplet" => app_id})
     wait_until_instance_gone(app_id)
-
-    dea_server.evacuate
 
     wait_until(5) do
       dea_server.terminated?

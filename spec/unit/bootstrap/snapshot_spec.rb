@@ -37,7 +37,7 @@ describe Dea::Snapshot do
         state = Dea::Instance::State.const_get(name)
 
         instance = Dea::Instance.new(bootstrap, valid_instance_attributes(true).merge(instance_attributes))
-        instance.stub(:validate)
+        allow(instance).to receive(:validate)
         instance.state = state
         instances << instance
       end
@@ -49,7 +49,7 @@ describe Dea::Snapshot do
       snapshot.save
 
       saved_snapshot = ::Yajl::Parser.parse(File.read(snapshot.path))
-      saved_snapshot["time"].should be_within(1.0).of(Time.now.to_f)
+      expect(saved_snapshot["time"]).to be_within(1.0).of(Time.now.to_f)
     end
 
     it "saves the instance registry" do
@@ -68,7 +68,7 @@ describe Dea::Snapshot do
         attributes["state"]
       end.sort.uniq
 
-      actual_states.should == expected_states
+      expect(actual_states).to eq(expected_states)
     end
 
     it "saves the staging task registry" do
@@ -89,7 +89,7 @@ describe Dea::Snapshot do
       before do
         snapshot.save
         saved_snapshot = ::Yajl::Parser.parse(File.read(snapshot.path))
-        saved_snapshot["time"].should be_within(1.0).of(Time.now.to_f)
+        expect(saved_snapshot["time"]).to be_within(1.0).of(Time.now.to_f)
         @instance = saved_snapshot["instances"].first
       end
 
@@ -103,7 +103,7 @@ describe Dea::Snapshot do
         syslog_drain_urls
         )
 
-        @instance.keys.should include *expected_keys
+        expect(@instance.keys).to include *expected_keys
       end
 
       it 'has extra keys for debugging purpose' do
@@ -114,72 +114,90 @@ describe Dea::Snapshot do
           instance_id
         )
 
-        @instance.keys.should include *expected_keys
+        expect(@instance.keys).to include *expected_keys
       end
 
       it 'has correct drain urls' do
-        @instance["syslog_drain_urls"].should =~ %w(syslog://log.example.com syslog://log2.example.com)
+        expect(@instance["syslog_drain_urls"]).to eq(%w(syslog://log.example.com syslog://log2.example.com))
       end
 
       it "has the instance's start timestamp so we can report its uptime" do
-        @instance.should have_key("state_starting_timestamp")
+        expect(@instance).to have_key("state_starting_timestamp")
       end
 
       it "has the instance health_check_timeout" do
-        @instance["health_check_timeout"].should eq(256)
+        expect(@instance["health_check_timeout"]).to eq(256)
       end
     end
   end
 
   describe "load" do
-    before do
-      File.open(snapshot.path, "w") do |file|
-        saved_snapshot = {
-          "instances" => [
-            {
-              "k1" => "v1",
-              "k2" => "v2",
-              "state" => "abc",
-            },
-            {
-              "k1" => "v1",
-              "k2" => "v2",
-              "state" => "abc",
-            },
-          ],
-        }
+    context 'with a valid snapshot' do
+      before do
+        File.open(snapshot.path, "w") do |file|
+          saved_snapshot = {
+            "instances" => [
+              {
+                "k1" => "v1",
+                "k2" => "v2",
+                "state" => "abc",
+              },
+              {
+                "k1" => "v1",
+                "k2" => "v2",
+                "state" => "abc",
+              },
+            ],
+          }
 
-        file.write(::Yajl::Encoder.encode(saved_snapshot))
-      end
-    end
-
-    it "should load a snapshot" do
-      2.times do
-        instance = Dea::Instance.new(bootstrap, valid_instance_attributes)
-        instance.stub(:validate)
-
-        instance.
-          should_receive(:state=).
-          ordered.
-          with(Dea::Instance::State::RESUMING)
-
-        instance.
-          should_receive(:state=).
-          ordered.
-          with("abc")
-
-        instance_manager.should_receive(:create_instance) do |attr|
-          attr.should_not include("state")
-
-          # Return mock instance
-          instance
+          file.write(::Yajl::Encoder.encode(saved_snapshot))
         end
       end
 
-      snapshot.load
+      it "should load a snapshot" do
+        2.times do
+          instance = Dea::Instance.new(bootstrap, valid_instance_attributes)
+          allow(instance).to receive(:validate)
+
+          allow(instance).to receive(:state=).ordered.with(Dea::Instance::State::RESUMING)
+
+          allow(instance).to receive(:state=).ordered.with("abc")
+
+          expect(instance_manager).to receive(:create_instance) do |attr|
+            expect(attr).to_not include("state")
+
+            # Return mock instance
+            instance
+          end
+        end
+
+        snapshot.load
+      end
+    end
+
+    context 'when the snapshot does not exist' do
+      it 'does not error' do
+        expect { snapshot.load }.to_not raise_error
+      end
+    end
+
+    context 'when the snapshot is invalid' do
+      let(:logger) { double(:logger) }
+
+      before do
+        allow(snapshot).to receive(:logger) { logger }
+        File.open(snapshot.path, "w") do |file|
+          file.write('garbage')
+        end
+      end
+
+      it 'should log an error' do
+        expect(logger).to receive(:error).with('Failed to parse', hash_including(:file, :error))
+        expect { snapshot.load }.to raise_error Yajl::ParseError
+      end
     end
   end
-  
+
   describe "load the snapshot with STARTING state" do
     before do
       File.open(snapshot.path, "w") do |file|
@@ -199,20 +217,14 @@ describe Dea::Snapshot do
 
     it "the state should be changed to CRASHED" do
       instance = Dea::Instance.new(bootstrap, valid_instance_attributes)
-      instance.stub(:validate)
+      allow(instance).to receive(:validate)
 
-      instance.
-        should_receive(:state=).
-        ordered.
-        with(Dea::Instance::State::RESUMING)
+      allow(instance).to receive(:state=).ordered.with(Dea::Instance::State::RESUMING)
 
-      instance.
-        should_receive(:state=).
-         ordered.
-        with(Dea::Instance::State::CRASHED)
+      allow(instance).to receive(:state=).ordered.with(Dea::Instance::State::CRASHED)
 
-      instance_manager.should_receive(:create_instance) do |attr|
-        attr.should_not include("state")
+      expect(instance_manager).to receive(:create_instance) do |attr|
+        expect(attr).to_not include("state")
 
         # Return mock instance
         instance
@@ -241,20 +253,14 @@ describe Dea::Snapshot do
 
     it "the state should be kept RUNNING" do
       instance = Dea::Instance.new(bootstrap, valid_instance_attributes)
-      instance.stub(:validate)
+      allow(instance).to receive(:validate)
 
-      instance.
-          should_receive(:state=).
-          ordered.
-          with(Dea::Instance::State::RESUMING)
+      allow(instance).to receive(:state=).ordered.with(Dea::Instance::State::RESUMING)
 
-      instance.
-          should_receive(:state=).
-          ordered.
-          with("Dea::Instance::State::RUNNING")
+      allow(instance).to receive(:state=).ordered.with("Dea::Instance::State::RUNNING")
 
-      instance_manager.should_receive(:create_instance) do |attr|
-        attr.should_not include("state")
+      expect(instance_manager).to receive(:create_instance) do |attr|
+        expect(attr).to_not include("state")
 
         # Return mock instance
         instance

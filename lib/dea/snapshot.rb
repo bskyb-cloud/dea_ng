@@ -46,7 +46,13 @@ module Dea
 
       start = Time.now
 
-      snapshot = ::Yajl::Parser.parse(File.read(path))
+      begin
+        snapshot = ::Yajl::Parser.parse(File.read(path))
+      rescue Yajl::ParseError => err
+        logger.error("Failed to parse", file: path, error: err)
+        raise
+      end
+
       snapshot ||= {}
 
       if snapshot["instances"]
@@ -80,8 +86,5 @@ module Dea
     private
     attr_reader :staging_task_registry, :instance_registry, :base_dir, :instance_manager
 
-    def logger
-      @logger ||= Steno::Logger.new("Snapshot", Steno.config.sinks, :level => Steno.config.default_log_level)
-    end
   end
 end

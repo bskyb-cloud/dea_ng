@@ -6,6 +6,7 @@ module Dea
   class Config
     DEFAULT_STAGING_DISK_INODE_LIMIT = 200_000
     DEFAULT_INSTANCE_DISK_INODE_LIMIT = 200_000
+    DEFAULT_INSTANCE_NPROC_LIMIT = 512
     DEFAULT_ROUTER_REGISTER_INTERVAL_IN_SECONDS = 20
 
     EMPTY_CONFIG = {
@@ -25,6 +26,7 @@ module Dea
         "max_cpu_share_limit" => 256,
         "min_cpu_share_limit" => 1,
         "disk_inode_limit" => DEFAULT_INSTANCE_DISK_INODE_LIMIT,
+        "nproc_limit" => DEFAULT_INSTANCE_NPROC_LIMIT,
       },
       "stacks" => [],
       "staging" => {
@@ -117,6 +119,7 @@ module Dea
             "max_cpu_share_limit" => Integer,
             "min_cpu_share_limit" => Integer,
             "disk_inode_limit" => Integer,
+            optional("nproc_limit") => Integer,
             optional("bandwidth_limit") => {
               "rate" => Integer,
               "burst" => Integer,
@@ -136,6 +139,8 @@ module Dea
               "burst" => Integer,
             },
           },
+
+          optional("post_setup_hook") => String,
 
           optional("firewalls") => {
               optional("script") => String,
@@ -205,6 +210,10 @@ module Dea
       @config.fetch("instance", {}).fetch("disk_inode_limit", DEFAULT_INSTANCE_DISK_INODE_LIMIT)
     end
 
+    def instance_nproc_limit
+      @config.fetch("instance", {}).fetch("nproc_limit", DEFAULT_INSTANCE_NPROC_LIMIT)
+    end
+
     def staging_bandwidth_limit
       @config.fetch("staging", {})["bandwidth_limit"]
     end
@@ -216,6 +225,10 @@ module Dea
     def rootfs_path(stack_name)
       stack = @config['stacks'].find { |stack_hash| stack_hash['name'] == stack_name }
       stack['package_path'] unless stack.nil?
+    end
+
+    def post_setup_hook
+      @config['post_setup_hook']
     end
   end
 end

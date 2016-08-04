@@ -11,7 +11,6 @@ require "loggregator_emitter"
 require "thin"
 
 require "vcap/common"
-require "vcap/component"
 
 require "dea/config"
 require "container/container"
@@ -77,6 +76,7 @@ module Dea
     def setup
       validate_config
 
+      @uuid = SecureRandom.uuid
       setup_nats
       setup_logging
       setup_loggregator
@@ -93,14 +93,10 @@ module Dea
       setup_pid_file
     end
 
-    def setup_varz
-      VCAP::Component.varz.synchronize do
-        VCAP::Component.varz[:stacks] = config["stacks"].map { |stack| stack['name'] }
-      end
-
+    def start_metrics
       EM.add_periodic_timer(DEFAULT_HEARTBEAT_INTERVAL) do
         Fiber.new do
-          periodic_varz_update
+          periodic_metrics_emit
         end.resume
       end
     end
@@ -132,7 +128,6 @@ module Dea
       options[:sinks] << @log_counter
 
       Steno.init(Steno::Config.new(options))
-      logger.info("Dea started")
     end
 
     attr_reader :warden_container_lister
@@ -194,8 +189,12 @@ module Dea
 
 ### SIG_Handlers
 
+    attr_reader :evac_handler, :shutdown_handler
+
     def setup_signal_handlers
-      @sig_handler ||= SignalHandler.new(uuid, local_ip, nats, locator_responders, instance_registry, @staging_task_registry, droplet_registry, @directory_server_v2, logger, config)
+      @evac_handler ||= EvacuationHandler.new(nats, locator_responders, instance_registry, logger, config)
+      @shutdown_handler ||= ShutdownHandler.new(nats, locator_responders, instance_registry, @staging_task_registry, droplet_registry, @directory_server_v2, logger)
+      @sig_handler ||= SignalHandler.new(uuid, local_ip, nats, locator_responders, instance_registry, evac_handler, shutdown_handler, logger)
       @sig_handler.setup do |signal, &handler|
         ::Kernel.trap(signal, &handler)
       end
@@ -261,13 +260,17 @@ module Dea
       @nats = Dea::Nats.new(self, config)
     end
 
+    attr_reader :staging_responder
+
     def start_nats
       nats.start
+
+      @staging_responder = Dea::Responders::Staging.new(nats, uuid, self, staging_task_registry, directory_server_v2, resource_manager, config)
 
       @responders = [
         Dea::Responders::DeaLocator.new(nats, uuid, resource_manager, config),
         Dea::Responders::StagingLocator.new(nats, uuid, resource_manager, config),
-        Dea::Responders::Staging.new(nats, uuid, self, staging_task_registry, directory_server_v2, resource_manager, config),
+        @staging_responder,
       ].each(&:start)
     end
 
@@ -279,22 +282,6 @@ module Dea
         r.is_a?(Dea::Responders::DeaLocator) ||
           r.is_a?(Dea::Responders::StagingLocator)
       end
-    end
-
-    def start_component
-      VCAP::Component.register(
-        :type => "DEA",
-        :host => local_ip,
-        :index => config["index"],
-        :nats => self.nats.client,
-        :port => config["status"]["port"],
-        :user => config["status"]["user"],
-        :password => config["status"]["password"],
-        :logger => logger,
-        :log_counter => @log_counter
-      )
-
-      @uuid = VCAP::Component.uuid
     end
 
     def setup_sweepers
@@ -316,13 +303,9 @@ module Dea
     end
 
     def start_finish
-      nats.publish("dea.start", Dea::Protocol::V1::HelloMessage.generate(self))
       locator_responders.map(&:advertise)
-
-      unless instance_registry.empty?
-        logger.info("Loaded #{instance_registry.size} instances from snapshot")
-        send_heartbeat()
-      end
+      logger.info("Loaded #{instance_registry.size} instances from snapshot")
+      send_heartbeat()
     end
 
     def register_directory_server_v2
@@ -333,19 +316,21 @@ module Dea
     end
 
     def start
+      setup_signal_handlers
+
       download_buildpacks
 
       snapshot.load
 
-      start_component
       setup_sweepers
       start_nats
       setup_register_routes
       directory_server_v2.start
-      setup_varz
+      start_metrics
 
-      setup_signal_handlers
       start_finish
+
+      logger.info("Dea started", uuid: uuid)
     end
 
     def reap_unreferenced_droplets
@@ -362,10 +347,6 @@ module Dea
     end
 
 ### Handle_Nats_Messages
-
-    def handle_health_manager_start(message)
-      send_heartbeat()
-    end
 
     def setup_register_routes
       register_routes
@@ -389,15 +370,13 @@ module Dea
       register_directory_server_v2
     end
 
-    def handle_dea_status(message)
-      message.respond(Dea::Protocol::V1::DeaStatusResponse.generate(self))
-    end
-
     def handle_dea_directed_start(message)
       start_app(message.data)
     end
 
     def start_app(data)
+      return if evac_handler.evacuating? || shutdown_handler.shutting_down?
+
       instance = instance_manager.create_instance(data)
       return unless instance
 
@@ -405,6 +384,16 @@ module Dea
     end
 
     def handle_dea_stop(message)
+      if message.data.size == 1 && message.data['droplet']
+        staging_stop_msg = Dea::Nats::Message.new(
+          message.nats,
+          'staging.stop',
+          {'app_id'  => message.data['droplet'].to_s},
+          nil,
+        )
+        staging_responder.handle_stop(staging_stop_msg)
+      end
+
       instance_registry.instances_filtered_by_message(message) do |instance|
         next if instance.resuming? || instance.stopped? || instance.crashed?
 
@@ -476,24 +465,11 @@ module Dea
       nil
     end
 
-    def periodic_varz_update
-      mem_required = config.minimum_staging_memory_mb
-      disk_required = config.minimum_staging_disk_mb
-      reservable_stagers = resource_manager.number_reservable(mem_required, disk_required)
-      available_memory_ratio = resource_manager.available_memory_ratio
-      available_disk_ratio = resource_manager.available_disk_ratio
-      warden_containers = warden_container_lister.list.handles || []
-
-      VCAP::Component.varz.synchronize do
-        VCAP::Component.varz[:can_stage] = (reservable_stagers > 0) ? 1 : 0
-        VCAP::Component.varz[:reservable_stagers] = reservable_stagers
-        VCAP::Component.varz[:available_memory_ratio] = available_memory_ratio
-        VCAP::Component.varz[:available_disk_ratio] = available_disk_ratio
-        VCAP::Component.varz[:instance_registry] = instance_registry.to_hash
-        VCAP::Component.varz[:warden_containers] = warden_containers
-      end
-    rescue => e
-      logger.error('periodic.varz.failure', error: e, backtrace: e.backtrace)
+    def periodic_metrics_emit
+      Dea::Loggregator.emit_value('remaining_memory', resource_manager.remaining_memory, 'mb')
+      Dea::Loggregator.emit_value('remaining_disk', resource_manager.remaining_disk, 'mb')
+      Dea::Loggregator.emit_value('instances', instance_registry.size, 'instances')
+      instance_registry.emit_container_stats
     end
 
     def download_buildpacks
@@ -530,4 +506,3 @@ module Dea
     end
   end
 end
-

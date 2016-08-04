@@ -23,133 +23,169 @@ describe "Dea::Bootstrap#handle_dea_stop" do
 
   let(:resource_manager) do
     manager = double(:resource_manager)
-    manager.stub(:could_reserve?).and_return(true)
-    manager.stub(:number_reservable).and_return(123)
+    allow(manager).to receive(:could_reserve?).and_return(true)
+    allow(manager).to receive(:number_reservable).and_return(123)
     manager
   end
 
   let(:instance_registry) { double(:instance_registry, :register => nil, :unregister => nil, :each => []) }
 
   before do
-    bootstrap.unstub(:setup_router_client)
+    allow(bootstrap).to receive(:setup_router_client).and_call_original
     with_event_machine do
       bootstrap.setup
       done
     end
 
-    Dea::Instance.any_instance.stub(:setup_link)
-    Dea::Responders::DeaLocator.any_instance.stub(:start) # to deal with test pollution
-    Dea::Responders::StagingLocator.any_instance.stub(:start) # to deal with test pollution
-    bootstrap.stub(:resource_manager).and_return(resource_manager)
-    bootstrap.stub(:instance_registry).and_return(instance_registry)
-    bootstrap.stub(:send_heartbeat)
+    allow_any_instance_of(Dea::Instance).to receive(:setup_link)
+    allow_any_instance_of(Dea::Responders::DeaLocator).to receive(:start) # to deal with test pollution
+    allow_any_instance_of(Dea::Responders::StagingLocator).to receive(:start) # to deal with test pollution
+    allow(bootstrap).to receive(:resource_manager).and_return(resource_manager)
+    allow(bootstrap).to receive(:instance_registry).and_return(instance_registry)
+    allow(bootstrap).to receive(:send_heartbeat)
 
-    instance_registry.stub(:instances_filtered_by_message).and_yield(instance_mock)
-    instance_mock.stub(:promise_stop).and_return(delivering_promise)
-    instance_mock.stub(:destroy)
-    instance_mock.stat_collector.stub(:start)
+    allow(instance_registry).to receive(:instances_filtered_by_message).and_yield(instance_mock)
+    allow(instance_mock).to receive(:promise_stop).and_return(delivering_promise)
+    allow(instance_mock).to receive(:destroy)
   end
 
-  describe "filtering" do
-    before do
-      instance_registry.stub(:instances_filtered_by_message) do
-        EM.next_tick do
-          done
-        end
-      end.and_yield(instance_mock)
-    end
+  describe 'stopping instances' do
+    describe "filtering" do
+      before do
+        allow(instance_registry).to receive(:instances_filtered_by_message) do
+          EM.next_tick do
+            done
+          end
+        end.and_yield(instance_mock)
+      end
 
-    it "skips instances that are not running" do
-      instance_mock.state = Dea::Instance::State::STOPPED
-      instance_mock.should_not_receive(:stop)
-
-      publish
-    end
-
-    def self.it_stops_the_instance
-      it "stops the instance" do
-        instance_mock.should_receive(:stop)
+      it "skips instances that are not running" do
+        instance_mock.state = Dea::Instance::State::STOPPED
+        expect(instance_mock).to_not receive(:stop)
 
         publish
       end
-    end
 
-    def self.it_unregisters_with_the_router
-      it "unregisters with the router" do
-        sent_router_unregister = false
-        nats_mock.subscribe("router.unregister") do
-          sent_router_unregister = true
-          EM.stop
+      def self.it_stops_the_instance
+        it "stops the instance" do
+          expect(instance_mock).to receive(:stop)
+
+          publish
         end
+      end
 
-        publish
+      context "when the app is born" do
+        before { instance_mock.state = Dea::Instance::State::BORN }
 
-        sent_router_unregister.should be_true
+        it_stops_the_instance
+      end
+
+      context "when the app is starting" do
+        before { instance_mock.state = Dea::Instance::State::STARTING }
+
+        it_stops_the_instance
+      end
+
+      context "when the app is running" do
+        before { instance_mock.state = Dea::Instance::State::RUNNING }
+
+        it_stops_the_instance
+      end
+
+      context "when the app is evacuating" do
+        before { instance_mock.state = Dea::Instance::State::EVACUATING }
+
+        it_stops_the_instance
+      end
+
+      context "when the app is stopping" do
+        before { instance_mock.state = Dea::Instance::State::STOPPING }
+
+        it_stops_the_instance
+      end
+
+      [Dea::Instance::State::STOPPED, Dea::Instance::State::CRASHED,
+       Dea::Instance::State::RESUMING].each do |state|
+        context "when the app is #{state}" do
+          before { instance_mock.state = state }
+
+          it 'does not stop' do
+            expect(instance_mock).not_to receive(:stop)
+
+            publish
+          end
+        end
       end
     end
 
-    context "when the app is born" do
-      before { instance_mock.state = Dea::Instance::State::BORN }
+    describe "when stop completes" do
+      let(:logger) { double("logger") }
 
-      it_stops_the_instance
-    end
+      before do
+        allow(bootstrap).to receive(:logger).and_return(logger)
+        allow(instance_mock).to receive(:running?).and_return(true)
 
-    context "when the app is starting" do
-      before { instance_mock.state = Dea::Instance::State::STARTING }
+        allow(instance_registry).to receive(:instances_filtered_by_message) do
+          EM.next_tick do
+            done
+          end
+        end.and_yield(instance_mock)
+      end
 
-      it_stops_the_instance
-    end
+      describe "with failure" do
+        before do
+          allow(instance_mock).to receive(:stop).and_yield(RuntimeError.new("Error"))
+        end
 
-    context "when the app is running" do
-      before { instance_mock.state = Dea::Instance::State::RUNNING }
+        it "works" do
+          expect(logger).to receive(:info).with("Dea started", hash_including(:uuid))
+          expect(logger).to receive(:warn)
+          publish
+        end
+      end
 
-      it_stops_the_instance
-      it_unregisters_with_the_router
-    end
+      describe "with success" do
+        before do
+          allow(instance_mock).to receive(:stop).and_yield(nil)
+        end
 
-    context "when the app is evacuating" do
-      before { instance_mock.state = Dea::Instance::State::EVACUATING }
-
-      it_stops_the_instance
-      it_unregisters_with_the_router
-    end
-
-    context "when the app is stopping" do
-      before { instance_mock.state = Dea::Instance::State::STOPPING }
-
-      it_stops_the_instance
-      it_unregisters_with_the_router
+        it "works" do
+          expect(logger).to receive(:info).with("Dea started", hash_including(:uuid))
+          expect(logger).not_to receive(:warn)
+          publish
+        end
+      end
     end
   end
 
-  describe "when stop completes" do
+  describe 'stop staging' do
+    let(:staging_responder) { double(Dea::Responders::Staging) }
+
     before do
-      instance_mock.stub(:running?).and_return(true)
+      allow(bootstrap).to receive(:staging_responder).and_return(staging_responder)
+    end
 
-      instance_registry.stub(:instances_filtered_by_message) do
-        EM.next_tick do
-          done
+    context 'when message is an app stop' do
+      it 'sends a stop message to the staging responder' do
+        expect(staging_responder).to receive(:handle_stop) do |msg|
+          expect(msg.subject).to eq 'staging.stop'
+          expect(msg.data).to eq({'app_id'  => 'app-id'})
         end
-      end.and_yield(instance_mock)
-    end
-
-    describe "with failure" do
-      before do
-        instance_mock.stub(:stop).and_yield(RuntimeError.new("Error"))
-      end
-
-      it "works" do
-        publish
+        publish({'droplet' => 'app-id'})
       end
     end
 
-    describe "with success" do
-      before do
-        instance_mock.stub(:stop).and_yield(nil)
+    context 'when message is an instance/index stop' do
+      it 'does not send a stop message to the staging responder' do
+        expect(staging_responder).to_not receive(:handle_stop)
+        publish({data:{'droplet' => 'app-id', 'version' => '3'}})
       end
+    end
 
-      it "works" do
-        publish
+    context 'when the message has no droplet' do
+      it 'does not send a stop message to the staging responder' do
+        expect(staging_responder).to_not receive(:handle_stop)
+        publish({data:{'version' => '3'}})
       end
     end
   end

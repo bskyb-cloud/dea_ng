@@ -39,8 +39,11 @@ describe SignalHandler do
     { "evacuation_bail_out_time_in_seconds" => 15 * 60 }
   end
 
+  let(:evac_handler) { EvacuationHandler.new(message_bus, locator_responders, instance_registry, logger, config) }
+  let(:shutdown_handler) { ShutdownHandler.new(message_bus, locator_responders, instance_registry, staging_registry, droplet_registry, directory_server, logger) }
+
   subject(:handler) do
-    SignalHandler.new(uuid, local_ip, message_bus, locator_responders, instance_registry, staging_registry, droplet_registry, directory_server, logger, config)
+    SignalHandler.new(uuid, local_ip, message_bus, locator_responders, instance_registry, evac_handler, shutdown_handler, logger)
   end
 
   before do
@@ -52,37 +55,34 @@ describe SignalHandler do
 
   describe "signal handler behavior" do
     before do
-      Thread.stub(:new) do |&block|
+      allow(Thread).to receive(:new) do |&block|
         block.call
       end
     end
 
     describe "#trap_term" do
       it "shutsdown the system" do
-        expect(message_bus).to receive(:stop)
+        expect(shutdown_handler).to receive(:shutdown!)
 
         @signal_handlers["TERM"].call
-        expect(@published_messages["dea.shutdown"]).to have(1).item
         done
       end
     end
 
     describe "#trap_int" do
       it "shutsdown the system" do
-        expect(message_bus).to receive(:stop)
+        expect(shutdown_handler).to receive(:shutdown!)
 
         @signal_handlers["INT"].call
-        expect(@published_messages["dea.shutdown"]).to have(1).item
         done
       end
     end
 
     describe "#trap_quit" do
       it "shutsdown the system" do
-        expect(message_bus).to receive(:stop)
+        expect(shutdown_handler).to receive(:shutdown!)
 
         @signal_handlers["QUIT"].call
-        expect(@published_messages["dea.shutdown"]).to have(1).item
         done
       end
     end
@@ -108,26 +108,29 @@ describe SignalHandler do
     end
 
     describe "#trap_usr2" do
-      before do
-        instance_registry.register(instance)
-        @signal_handlers["USR2"].call
-        done
-      end
+      context 'when evacuation is not complete' do
+        it "does not shutdown the system" do
+          expect(evac_handler).to receive(:evacuate!).and_return(false)
+          expect(shutdown_handler).not_to receive(:shutdown!)
+          timer_block = nil
+          expect(EM).to receive(:add_timer).with(5) do |&callback|
+            timer_block = callback
+          end
 
-      it "evacuates the system, and does not shut it down" do
-        expect(@published_messages["droplet.exited"]).to have(1).item
-        expect(@published_messages["dea.shutdown"]).to have(1).item
-      end
-
-      context "when the evacuation is finished" do
-        before do
-          instance.state = Dea::Instance::State::STOPPED
-        end
-
-        it "shutsdown the system" do
-          expect(message_bus).to receive(:stop)
           @signal_handlers["USR2"].call
-          expect(@published_messages["dea.shutdown"]).to have(2).items
+
+          expect(timer_block).not_to be_nil
+          expect(handler).to receive(:evacuate)
+          timer_block.call
+          done
+        end
+      end
+
+      context 'when evacuation is complete' do
+        it "does shutdown the system" do
+          expect(evac_handler).to receive(:evacuate!).and_return(true)
+          expect(shutdown_handler).to receive(:shutdown!)
+          @signal_handlers["USR2"].call
           done
         end
       end
@@ -136,12 +139,12 @@ describe SignalHandler do
 
   describe "scheduling signal handler execution" do
     it "spawns a thread to schedule the handler to event machine" do
-      handler.stub(:trap_quit) do
+      allow(handler).to receive(:trap_quit) do
         done
       end
 
-      Thread.should_receive(:new).and_yield
-      EM.should_receive(:schedule).and_call_original
+      allow(Thread).to receive(:new).and_yield
+      allow(EM).to receive(:schedule).and_call_original
       @signal_handlers["QUIT"].call
     end
   end

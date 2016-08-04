@@ -1,12 +1,13 @@
 require 'spec_helper'
 require 'container/container'
+require 'loggregator_emitter'
 
 describe Container do
   let(:handle) { 'fakehandle' }
   let(:socket_path) { '/tmp/warden.sock.notreally' }
 
   let(:client_provider) { double('connection provider', get: connection) }
-  subject(:container) { described_class.new(client_provider) }
+  let(:container) { Container.new(client_provider) }
 
   let(:request) { double('request') }
   let(:response) { double('response') }
@@ -25,7 +26,7 @@ describe Container do
 
   describe '#close_all_connections' do
     it 'deletegates to connection provider' do
-      client_provider.should_receive(:close_all)
+      allow(client_provider).to receive(:close_all)
       container.close_all_connections
     end
   end
@@ -38,7 +39,7 @@ describe Container do
     it 'sends an info request to the container' do
 
       called = false
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         called = true
         expect(request).to be_a(::Warden::Protocol::InfoRequest)
         expect(request.handle).to eq(handle)
@@ -46,12 +47,12 @@ describe Container do
 
       container.info
 
-      expect(called).to be_true
+      expect(called).to be true
     end
 
     context 'when the request fails' do
       it 'raises an exception' do
-        connection.should_receive(:call).and_raise('foo')
+        allow(connection).to receive(:call).and_raise('foo')
 
         expect { container.info }.to raise_error('foo')
       end
@@ -61,13 +62,13 @@ describe Container do
   describe '#list' do
     it 'sends a list request to the container' do
       called = false
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         called = true
         expect(request).to be_a(::Warden::Protocol::ListRequest)
       end
 
       container.list
-      expect(called).to be_true
+      expect(called).to be true
     end
   end
 
@@ -82,7 +83,7 @@ describe Container do
     ) }
 
     it "makes warden InfoRequest, then updates and returns the container's path" do
-      container.should_receive(:call).and_return do |name, request|
+      allow(container).to receive(:call) do |name, request|
         expect(name).to eq(:info)
         expect(request.handle).to eq('fakehandle')
         info_response
@@ -96,7 +97,7 @@ describe Container do
 
     context 'when InfoRequest does not return a container_path in the response' do
       it 'raises error' do
-        container.should_receive(:call).and_return(Warden::Protocol::InfoResponse.new)
+        allow(container).to receive(:call).and_return(Warden::Protocol::InfoResponse.new)
 
         expect {
           container.update_path_and_ip
@@ -120,9 +121,9 @@ describe Container do
       let(:connection_error) { ::EM::Warden::Client::ConnectionError.new(error_msg) }
 
       it 'should retry the call (which will get a new connection)' do
-        container.should_receive(:call).with(connection_name, request).ordered.and_raise(connection_error)
-        container.should_receive(:call).with(connection_name, request).ordered.and_raise(connection_error)
-        container.should_receive(:call).with(connection_name, request).ordered.and_return(response)
+        allow(container).to receive(:call).with(connection_name, request).ordered.and_raise(connection_error)
+        allow(container).to receive(:call).with(connection_name, request).ordered.and_raise(connection_error)
+        allow(container).to receive(:call).with(connection_name, request).ordered.and_return(response)
         result = container.call_with_retry(connection_name, request)
         expect(result).to eq(response)
       end
@@ -130,7 +131,7 @@ describe Container do
 
     context 'when the call succeeds' do
       it 'should succeed with one call and not log debug output or warnings' do
-        container.should_receive(:call).with(connection_name, request).ordered.and_return(response)
+        allow(container).to receive(:call).with(connection_name, request).ordered.and_return(response)
         result = container.call_with_retry(connection_name, request)
         expect(result).to eq(response)
       end
@@ -141,7 +142,7 @@ describe Container do
       let(:error_msg) { 'error' }
 
       it 'raises the error' do
-        container.should_receive(:call).with(connection_name, request).ordered.and_raise(other_error)
+        allow(container).to receive(:call).with(connection_name, request).ordered.and_raise(other_error)
 
         expect {
           container.call_with_retry(connection_name, request)
@@ -152,84 +153,71 @@ describe Container do
 
   describe '#call' do
     before do
-      VCAP::Component.varz.synchronize do
-        VCAP::Component.varz[:total_warden_response_time_in_ms] = 10
-        VCAP::Component.varz[:warden_request_count] = 10
-        VCAP::Component.varz[:warden_error_response_count] = 1
-      end
+      @emitter = FakeEmitter.new
+      @staging_emitter = FakeEmitter.new
+      Dea::Loggregator.emitter = @emitter
+      Dea::Loggregator.staging_emitter = @staging_emitter
     end
+
     it 'makes a request using connection#call' do
-      connection.should_receive(:call).with(request).and_return(response)
+      allow(connection).to receive(:call).with(request).and_return(response)
       container.call(connection_name, request)
     end
 
     context "when the call passes" do
-      subject(:the_call) do
+      let(:the_call) do
         Timecop.freeze(Time.local(2014, 1, 1, 0, 0, 0)) do
           container.call(connection_name, request)
         end
       end
 
       before do
-        connection.stub(:call) do
+        allow(connection).to receive(:call) do
           Timecop.freeze(Time.local(2014, 1, 1, 0, 0, 10))
         end
       end
 
-      it 'logs the response time to varz' do
+      it 'logs the response time to loggregator_emitter' do
         the_call
 
-        expect(VCAP::Component.varz[:total_warden_response_time_in_ms]).to eq(10_010)
+        expect(@emitter.messages['total_warden_response_time_in_ms'].length).to eq(1)
+        expect(@emitter.messages['total_warden_response_time_in_ms'][0][:delta]).to eq(10000)
       end
 
-      it 'logs the response count to varz' do
+      it 'logs the response count to loggregator_emitter' do
         the_call
 
-        expect(VCAP::Component.varz[:warden_request_count]).to eq(11)
-      end
-
-      context "when there's no recorded total_warden_response_time_in_ms or total_warden_request_count" do
-        before do
-          VCAP::Component.varz.synchronize do
-            VCAP::Component.varz[:total_warden_response_time_in_ms] = nil
-            VCAP::Component.varz[:warden_request_count] = nil
-          end
-        end
-
-        it "logs the values correctly" do
-          the_call
-
-          expect(VCAP::Component.varz[:total_warden_response_time_in_ms]).to eq(10_000)
-          expect(VCAP::Component.varz[:warden_request_count]).to eq(1)
-        end
+        expect(@emitter.messages['warden_request_count'].length).to eq(1)
+        expect(@emitter.messages['warden_request_count'][0][:delta]).to eq(1)
       end
     end
 
     context 'when the call fails' do
-      subject(:the_call) do
+      let(:the_call) do
         Timecop.freeze(Time.local(2014, 1, 1, 0, 0, 0)) do
           expect{ container.call(connection_name, request) }.to raise_error("Hell")
         end
       end
 
       before do
-        connection.stub(:call) do
+        allow(connection).to receive(:call) do
           Timecop.freeze(Time.local(2014, 1, 1, 0, 0, 10))
           raise "Hell"
         end
       end
 
-      it 'still logs the response time to varz' do
+      it 'still logs the response time to loggregator' do
         the_call
 
-        expect(VCAP::Component.varz[:total_warden_response_time_in_ms]).to eq(10010)
-        expect(VCAP::Component.varz[:warden_request_count]).to eq(11)
+        expect(@emitter.messages["total_warden_response_time_in_ms"].length).to eq(1)
+        expect(@emitter.messages["total_warden_response_time_in_ms"][0][:delta]).to eq(10000)
       end
 
-      it 'logs the failure to varz' do
+      it 'logs the failure to loggregator' do
         the_call
 
-        expect(VCAP::Component.varz[:warden_error_response_count]).to eq(2)
+        expect(@emitter.messages["warden_error_response_count"].length).to eq(1)
+        expect(@emitter.messages["warden_error_response_count"][0][:delta]).to eq(1)
       end
     end
   end
@@ -284,14 +272,14 @@ describe Container do
     let(:log_tag) { 'some-log-tag' }
 
     it 'calls call with the connection name and request' do
-      container.should_receive(:call) do |name, request|
+      allow(container).to receive(:call) do |name, request|
         expect(name).to eq(connection_name)
 
         expect(request).to be_an_instance_of(::Warden::Protocol::RunRequest)
         expect(request.handle).to eq(handle)
         expect(request.script).to eq(script)
-        expect(request.privileged).to be_false
-        expect(request.discard_output).to be_true
+        expect(request.privileged).to be false
+        expect(request.discard_output).to be true
         expect(request.log_tag).to eq(log_tag)
 
         response
@@ -302,7 +290,7 @@ describe Container do
     end
 
     it 'respects setting of privileged to true' do
-      container.should_receive(:call) do |_, request|
+      allow(container).to receive(:call) do |_, request|
         expect(request.privileged).to eq(true)
         response
       end
@@ -316,7 +304,7 @@ describe Container do
       let(:data) { {:script => script, :exit_status => exit_status, :stdout => stdout, :stderr => stderr} }
       let(:response) { double('response', :exit_status => exit_status, :stdout => stdout, :stderr => stderr) }
       it 'raises a warden error' do #check that it's a warden error with the exit status
-        container.should_receive(:call).and_return(response)
+        allow(container).to receive(:call).and_return(response)
         expect {
           container.run_script(connection_name, script)
         }.to raise_error { |error|
@@ -337,13 +325,13 @@ describe Container do
     it 'executes a SpawnRequest' do
       resource_limits = ::Warden::Protocol::ResourceLimits.new
 
-      container.should_receive(:call) do |name, request|
+      allow(container).to receive(:call) do |name, request|
         expect(name).to eq(:app)
         expect(request).to be_kind_of(::Warden::Protocol::SpawnRequest)
         expect(request.script).to eq(script)
         expect(request.handle).to eq(container.handle)
         expect(request.rlimits).to eq(resource_limits)
-        expect(request.discard_output).to be_true
+        expect(request.discard_output).to be true
 
         response
       end
@@ -354,12 +342,12 @@ describe Container do
     end
 
     it 'allows resource_limits to be unspecified' do
-      container.should_receive(:call) do |name, request|
+      allow(container).to receive(:call) do |name, request|
         expect(name).to eq(:app)
         expect(request).to be_kind_of(::Warden::Protocol::SpawnRequest)
         expect(request.script).to eq(script)
         expect(request.handle).to eq(container.handle)
-        expect(request.discard_output).to be_true
+        expect(request.discard_output).to be true
 
         response
       end
@@ -372,7 +360,7 @@ describe Container do
 
   describe '#destroy!' do
     it 'sends a destroy request to warden server' do
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         expect(request).to be_kind_of(::Warden::Protocol::DestroyRequest)
         expect(request.handle).to eq(container.handle)
 
@@ -382,13 +370,13 @@ describe Container do
     end
 
     it "sets the container's handle to nil" do
-      connection.stub(:call).and_return(response)
+      allow(connection).to receive(:call).and_return(response)
 
       expect { container.destroy! }.to change { container.handle }.to(nil)
     end
 
     it 'catches the EM::Warden::Client::Error' do
-      connection.stub(:call).and_raise(::EM::Warden::Client::Error)
+      allow(connection).to receive(:call).and_raise(::EM::Warden::Client::Error)
       expect {
         container.destroy!
       }.not_to raise_error
@@ -405,7 +393,7 @@ describe Container do
     end
 
     it 'makes a create network request for each rule' do
-      client_provider.should_receive(:get).with(:app).and_return(connection)
+      allow(client_provider).to receive(:get).with(:app).and_return(connection)
 
       protocols = []
 
@@ -477,13 +465,13 @@ describe Container do
     end
 
     it 'creates a new container with cpu, disk size in byte, disk inode limit, memory limit, bandwidth limit, and egress rules' do
-      container.should_receive(:new_container_with_bind_mounts_and_rootfs).with(bind_mounts, rootfs)
-      container.should_receive(:limit_cpu).with(params[:limit_cpu])
-      container.should_receive(:limit_disk).with(byte: params[:byte], inode: params[:inode])
-      container.should_receive(:limit_memory).with(params[:limit_memory])
-      container.should_receive(:limit_bandwidth).with(params[:limit_bandwidth])
-      container.should_receive(:setup_inbound_network)
-      container.should_receive(:setup_egress_rules).with(params[:egress_rules])
+      allow(container).to receive(:new_container_with_bind_mounts_and_rootfs).with(bind_mounts, rootfs)
+      allow(container).to receive(:limit_cpu).with(params[:limit_cpu])
+      allow(container).to receive(:limit_disk).with(byte: params[:byte], inode: params[:inode])
+      allow(container).to receive(:limit_memory).with(params[:limit_memory])
+      allow(container).to receive(:limit_bandwidth).with(params[:limit_bandwidth])
+      allow(container).to receive(:setup_inbound_network)
+      allow(container).to receive(:setup_egress_rules).with(params[:egress_rules])
 
       container.create_container(params)
     end
@@ -491,26 +479,26 @@ describe Container do
     it 'does not create the network if not required' do
       params[:setup_inbound_network] = false
 
-      container.stub(:new_container_with_bind_mounts_and_rootfs)
-      container.stub(:limit_cpu)
-      container.stub(:limit_disk)
-      container.stub(:limit_memory)
-      container.stub(:limit_bandwidth)
-      container.stub(:setup_egress_rules)
+      allow(container).to receive(:new_container_with_bind_mounts_and_rootfs)
+      allow(container).to receive(:limit_cpu)
+      allow(container).to receive(:limit_disk)
+      allow(container).to receive(:limit_memory)
+      allow(container).to receive(:limit_bandwidth)
+      allow(container).to receive(:setup_egress_rules)
 
-      container.should_not_receive(:setup_inbound_network)
+      expect(container).to_not receive(:setup_inbound_network)
       container.create_container(params)
     end
 
     it 'does not limit bandwidth if the parameter is missing' do
-      container.stub(:new_container_with_bind_mounts_and_rootfs)
-      container.stub(:limit_cpu)
-      container.stub(:limit_disk)
-      container.stub(:limit_memory)
-      container.stub(:setup_inbound_network)
-      container.stub(:setup_egress_rules)
+      allow(container).to receive(:new_container_with_bind_mounts_and_rootfs)
+      allow(container).to receive(:limit_cpu)
+      allow(container).to receive(:limit_disk)
+      allow(container).to receive(:limit_memory)
+      allow(container).to receive(:setup_inbound_network)
+      allow(container).to receive(:setup_egress_rules)
 
-      container.should_not_receive(:limit_bandwidth)
+      expect(container).to_not receive(:limit_bandwidth)
 
       params_without_limit_bandwidth = params.reject { |k, _| k == :limit_bandwidth }
       container.create_container(params_without_limit_bandwidth)
@@ -530,7 +518,7 @@ describe Container do
     let(:response) { double('response').as_null_object }
 
     before do
-      connection.stub(:call).and_return(response)
+      allow(connection).to receive(:call).and_return(response)
     end
 
     before do
@@ -539,7 +527,7 @@ describe Container do
 
     it 'makes a CreateRequest with the provide paths_to_bind and rootfs' do
       create_response = double('response', handle: handle)
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         #expect(request.name).to eq(:app)
         expect(request).to be_an_instance_of(::Warden::Protocol::CreateRequest)
 
@@ -584,7 +572,7 @@ describe Container do
     it 'calls #call_with_retry correctly' do
       fake_response = "fake response"
 
-      container.should_receive(:call_with_retry) do |name, request|
+      allow(container).to receive(:call_with_retry) do |name, request|
         expect(name).to eq(:link)
         expect(request).to be_an_instance_of(::Warden::Protocol::LinkRequest)
         expect(request.handle).to eq(container.handle)
@@ -607,7 +595,7 @@ describe Container do
 
     context 'when link exit status is 0' do
       it 'returns the response' do
-        container.stub(:link).and_return(response)
+        allow(container).to receive(:link).and_return(response)
         expect(container.link_or_raise('foobar')).to eq(response)
       end
     end
@@ -616,7 +604,7 @@ describe Container do
       let(:response) { double(exit_status: 127)}
 
       it 'raises a Container::WardenError' do
-        container.stub(:link).and_return(response)
+        allow(container).to receive(:link).and_return(response)
         expect {
           container.link_or_raise('foobar')
         }.to raise_error(Container::WardenError)
@@ -628,7 +616,7 @@ describe Container do
     it 'sets the memory limit' do
       limit_in_bytes = 100
       response = double('response', resolve: nil)
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         expect(request).to be_an_instance_of(::Warden::Protocol::LimitMemoryRequest)
         expect(request.limit_in_bytes).to eql(limit_in_bytes)
         response
@@ -641,7 +629,7 @@ describe Container do
     it 'sets the disk bytes limit' do
       disk_limit_in_bytes = 100
       disk_limit_response = double('disk response', resolve: nil)
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         expect(request).to be_an_instance_of(::Warden::Protocol::LimitDiskRequest)
         expect(request.byte).to eql(disk_limit_in_bytes)
 
@@ -653,7 +641,7 @@ describe Container do
     it 'sets the disk inodes limit' do
       disk_inodes_limit = 100
       disk_inodes_limit_response = double('disk response', resolve: nil)
-      connection.should_receive(:call) do |request|
+      allow(connection).to receive(:call) do |request|
         expect(request).to be_an_instance_of(::Warden::Protocol::LimitDiskRequest)
         expect(request.inode).to eql(disk_inodes_limit)
 
@@ -667,7 +655,7 @@ describe Container do
     context 'when a bandwidth limit is provided' do
       it 'sets the limit' do
         limit = { rate: 1_000_000, burst: 5_000_000 }
-        connection.should_receive(:call) do |request|
+        allow(connection).to receive(:call) do |request|
           expect(request).to be_an_instance_of(::Warden::Protocol::LimitBandwidthRequest)
           expect(request.rate).to eq(limit[:rate])
           expect(request.burst).to eq(limit[:burst])
@@ -681,14 +669,14 @@ describe Container do
 
   describe 'stream' do
     it 'streams the data' do
-      callback = lambda {}
-      connection.should_receive(:stream).with(request, &callback)
+      callback = lambda {|r|}
+      allow(connection).to receive(:stream).with(request, &callback)
       container.stream(request, &callback)
     end
   end
 
   describe Container::WardenError do
-    subject(:warden_error) { Container::WardenError.new('foo', 'FAKE_RESPONSE')}
+    let(:warden_error) { Container::WardenError.new('foo', 'FAKE_RESPONSE')}
 
     describe '#inspect' do
       it 'does not include response for security reason (not allowed to look into customer code / output)' do

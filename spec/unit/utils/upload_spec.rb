@@ -48,7 +48,7 @@ describe Upload do
       stub_request(:post, "http://127.0.0.1:12345/").with(query: {async: "true"})
       ran = false
       subject.upload! { ran = true }
-      expect(ran).to be_false
+      expect(ran).to be false
       done
     end
 
@@ -75,8 +75,8 @@ describe Upload do
 
       it "uploads a file" do
         subject.upload! do |error|
-          error.should be_nil
-          uploaded_contents.should match(/.*multipart-boundary-.*Content-Disposition.*This is the file contents.*multipart-boundary-.*/m)
+          expect(error).to be_nil
+          expect(uploaded_contents).to match(/.*multipart-boundary-.*Content-Disposition.*This is the file contents.*multipart-boundary-.*/m)
           done
         end
       end
@@ -95,6 +95,22 @@ describe Upload do
           subject.upload! do |error|
             expect(error).to be_a(UploadError)
             expect(error.message).to match /invalid url/i
+            done
+          end
+        end
+      end
+
+      context 'and it cannot reach the CC' do
+        let(:job_url) {'http://localhost:12346'} 
+        before do
+          start_http_server(12345) do |connection, data|
+            create_response(connection, job_string)
+          end
+        end
+
+        it 'should populate the error message correctly' do
+          subject.upload! do |error|
+            expect(error.message).to include "Polling failed - status 0; error: Errno::ECONNREFUSED"
             done
           end
         end
@@ -287,6 +303,7 @@ describe Upload do
         subject.upload! do |error|
           expect(error).to be_a(UploadError)
           expect(error.message).to include "Error uploading: (Upload failed"
+          expect(error.message).to include "error: Errno::ECONNREFUSED"
           done
         end
       end

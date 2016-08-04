@@ -82,19 +82,27 @@ module Dea
     end
 
     def destroy(&callback)
-      dir_to_remove = droplet_dirname + ".deleted." + Time.now.to_i.to_s
-
-      # Rename first to both prevent a new instance from referencing a file
-      # that is about to be deleted and to avoid doing a potentially expensive
-      # operation on the reactor thread.
-      logger.debug("Renaming #{droplet_dirname} to #{dir_to_remove}")
-      File.rename(droplet_dirname, dir_to_remove)
+      if !droplet_dirname.include?('.deleted.')
+        # Rename first to both prevent a new instance from referencing a file
+        # that is about to be deleted and to avoid doing a potentially expensive
+        # operation on the reactor thread.
+        dir_to_remove = droplet_dirname + ".deleted." + Time.now.to_i.to_s 
+        logger.debug("Renaming #{droplet_dirname} to #{dir_to_remove}")
+        begin
+          File.rename(droplet_dirname, dir_to_remove)
+        rescue SystemCallError => e
+          logger.debug("Already renamed #{droplet_dirname}", error: e)
+          return
+        end
+      else 
+        dir_to_remove = droplet_dirname
+      end
 
       operation = lambda do
         logger.debug("Removing #{dir_to_remove}")
 
         begin
-          FileUtils.rm_rf(dir_to_remove)
+          FileUtils.rm_r(dir_to_remove)
         rescue => e
           logger.log_exception(e)
         end

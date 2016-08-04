@@ -23,13 +23,11 @@ module Dea::Responders
 
     def start
       return unless configured_to_stage?
-      subscribe_to_staging
       subscribe_to_dea_specific_staging
       subscribe_to_staging_stop
     end
 
     def stop
-      unsubscribe_from_staging
       unsubscribe_from_dea_specific_staging
       unsubscribe_from_staging_stop
     end
@@ -83,15 +81,6 @@ module Dea::Responders
       config['staging'] && config['staging']['enabled']
     end
 
-    def subscribe_to_staging # Can we delete this??
-      @staging_sid =
-        nats.subscribe('staging', do_not_track_subscription: true, queue: 'staging') { |response| handle(response) }
-    end
-
-    def unsubscribe_from_staging
-      nats.unsubscribe(@staging_sid) if @staging_sid
-    end
-
     def subscribe_to_dea_specific_staging
       @dea_specified_staging_sid =
         nats.subscribe("staging.#{@dea_id}.start", {do_not_track_subscription: true}) { |response| handle(response) }
@@ -141,7 +130,7 @@ module Dea::Responders
 
         bootstrap.snapshot.save
 
-        if task.staging_message.start_message && !error
+        if !task.staging_message.start_message.message.empty? && !error
           start_message = task.staging_message.start_message.to_hash
           start_message['sha1'] = task.droplet_sha1
           # Now re-reserve the app's memory.  There may be a window between staging task unregistration and here

@@ -1,7 +1,7 @@
 module Dea
   class StartupScriptGenerator
     def self.strip_heredoc(string)
-      indent = string.scan(/^[ \t]*(?=\S)/).min.try(:size) || 0
+      indent = string.scan(/^[ \t]*(?=\S)/).min.size
       string.gsub(/^[ \t]{#{indent}}/, '')
     end
 
@@ -24,10 +24,11 @@ module Dea
       exec bash -c %s
     BASH
 
-    def initialize(start_command, user_envs, system_envs)
+    def initialize(start_command, user_envs, system_envs, post_setup_hook)
       @start_command = start_command
       @user_envs = user_envs
       @system_envs = system_envs
+      @post_setup_hook = post_setup_hook
     end
 
     def generate
@@ -37,6 +38,7 @@ module Dea
       script << @user_envs
       script << EXPORT_BUILDPACK_ENV_VARIABLES_SCRIPT
       script << "env > logs/env.log"
+      script << @post_setup_hook unless @post_setup_hook.nil? || @post_setup_hook == ''
       script << START_SCRIPT % Shellwords.shellescape(@start_command)
       script.join("\n")
     end

@@ -1,7 +1,8 @@
 Vagrant.configure("2") do |config|
 
-  config.vm.box = "warden-compatible"
-  config.vm.box_url = "https://s3.amazonaws.com/cf-runtime-artifacts/warden-compatible.box"
+  config.vm.box = "cloudfoundry/warden-compatible"
+
+  config.vm.synced_folder '~/workspace/cf-release', '/var/cf-release'
 
   config.vm.provider :vsphere do |vsphere, override|
     override.vm.box = 'dummy'
@@ -36,8 +37,7 @@ Vagrant.configure("2") do |config|
     }]
   end
 
-  # For Nokogiri
+  # Required for gem dependencies
   config.vm.provision "shell", inline: "sudo apt-get update"
-  config.vm.provision "shell", inline: "sudo apt-get -q -y install libxslt-dev libxml2-dev"
   config.vm.provision "shell", inline: "sudo apt-get -q -y install libcurl4-gnutls-dev"
 end

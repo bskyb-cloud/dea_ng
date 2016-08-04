@@ -51,7 +51,8 @@ describe "Running an app", :type => :integration, :requires_warden => true do
   end
 
   def stage
-    nats.make_blocking_request("staging", staging_message, 2)
+    stager_id = get_stager_id
+    nats.make_blocking_request("staging.#{stager_id}.start", staging_message, 2)
   end
 
   def stop
@@ -90,7 +91,7 @@ describe "Running an app", :type => :integration, :requires_warden => true do
       setup_fake_buildpack("start_command")
 
       expect do
-        nats.make_blocking_request("staging", staging_message, 2)
+        stage
 
         begin
           wait_until do
@@ -150,6 +151,27 @@ describe "Running an app", :type => :integration, :requires_warden => true do
         end
         stop
         wait_until_stopped
+      end
+    end
+
+    describe 'retrieving droplet stats with dea.find.droplet' do
+      it 'returns stats in the nats response' do
+        stage
+        wait_until_started
+
+        droplet_message = Yajl::Encoder.encode("droplet" => app_id, "states" => ["RUNNING"], 'include_stats' => true)
+        nats.with_nats do
+          NATS.subscribe("router.register") do |_|
+            NATS.request("dea.find.droplet", droplet_message, :timeout => 5) do |response|
+              droplet_info = Yajl::Parser.parse(response)
+              ustats = droplet_info['stats']['usage']
+              expect(ustats['cpu']).to eq(0)
+              expect(ustats['mem']).to be > 0
+              expect(ustats['disk']).to eq(65536)
+              NATS.stop
+            end
+          end
+        end
       end
     end
 

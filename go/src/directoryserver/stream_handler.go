@@ -5,9 +5,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
-	"github.com/howeyc/fsnotify"
+	"github.com/go-fsnotify/fsnotify"
 )
 
 type StreamHandler struct {
@@ -22,7 +23,7 @@ func (handler *StreamHandler) ServeHTTP(writer http.ResponseWriter, r *http.Requ
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		writer.WriteHeader(500)
-		writer.Write([]byte(fmt.Sprintf("Failed to tail file: %s", err.Error())))
+		writer.Write([]byte(fmt.Sprintf("Failed to setup file tailer: %s", err.Error())))
 		return
 	}
 
@@ -31,17 +32,25 @@ func (handler *StreamHandler) ServeHTTP(writer http.ResponseWriter, r *http.Requ
 		watcher.Close()
 
 		// Drain channels (just to make sure watcher's routines exit)
-		for _ = range watcher.Event {
+		for _ = range watcher.Events {
 		}
-		for _ = range watcher.Error {
+		for _ = range watcher.Errors {
 		}
 	}()
 
-	err = watcher.Watch(handler.File.Name())
+	err = watcher.Add(handler.File.Name())
 	if err != nil {
 		writer.WriteHeader(500)
 		writer.Write([]byte(fmt.Sprintf("Failed to tail file: %s", err.Error())))
 		return
+	}
+
+	// Add a watcher for the parent dir
+	err = watcher.Add(filepath.Dir(handler.File.Name()))
+	if err != nil {
+		watcher.Remove(handler.File.Name())
+		writer.WriteHeader(500)
+		writer.Write([]byte(fmt.Sprintf("Failed to tail parent dir of file: %s", err.Error())))
 	}
 
 	// Setup max latency writer
@@ -95,8 +104,8 @@ func (handler *StreamHandler) ServeHTTP(writer http.ResponseWriter, r *http.Requ
 			conn.Close()
 			return
 
-		case ev, ok := <-watcher.Event:
-			if !ok || ev.IsRename() {
+		case ev, ok := <-watcher.Events:
+			if !ok || ev.Op&fsnotify.Rename == fsnotify.Rename {
 				return
 			}
 
@@ -112,7 +121,7 @@ func (handler *StreamHandler) ServeHTTP(writer http.ResponseWriter, r *http.Requ
 				return
 			}
 
-		case _, ok := <-watcher.Error:
+		case _, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}

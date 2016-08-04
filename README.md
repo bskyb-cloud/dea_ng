@@ -35,7 +35,6 @@ with a HTTP redirect to a URL that hits the directory server directly.
 The URL is signed by the DEA, and the directory server checks the
 validity of the URL with the DEA before serving it.
 
-
 ## Usage
 
 You can run the dea executable at the command line by passing the path
@@ -52,73 +51,99 @@ The following is a partial list of the keys that are read from the YAML file:
 * `logging` - a [Steno configuration](http://github.com/cloudfoundry/steno#from-yaml-file)
 * `nats_servers` - an array of URIs of the form `nats://host:port` that the DEA will use to connect to NATS.
 * `warden_socket` - the path to a unix domain socket that the DEA will use to communicate to a warden server.
+* `instance.nproc_limit` - sets the system ulimit for the number of processes within an application container
 
 ### Running the DEA in the provided Vagrant VM
 
-When contributing to DEA it's useful to run it as a standalone
+When contributing to DEA it is useful to run it as a standalone
 component.
 
-[vagrant]: http://docs.vagrantup.com/v2/installation/index.html
-
-Follow these steps to set up DEA to run locally on your computer:
-
-```shell
-# clone the repo
-cd ~/workspace
-git clone http://github.com/cloudfoundry/dea_ng
-cd dea_ng
-git submodule update --init
-bundle install
+In the following examples, we assume that you have cloned the `cf-release` repository into `~/workspace/cf-release`.
+If you use a different path, you need to adjust the path in the DEA `Vagrantfile`
+to point to the correct location of `cf-release`, otherwise you will most likely get this error when you try
+to create the [Vagrant][vagrant] VM:
 
 ```
+vm:
+* The host path of the shared folder is missing: ~/workspace/cf-release
+```
 
-## Testing
+In this case, simply edit the `Vagrantfile` to insert the correct path and retry creating the VM.
+
+If you are able to bring up the VM, but the tests terminate quickly with this error message:
+
+```
+bash: /var/cf-release/src/dea-hm-workspace/src/dea_next/bin/start_warden_and_run_specs.sh: No such file or directory
+```
+then either the repository is incomplete/corrupted, or the directory mounted simply does not actually point to
+the cloned repository.  Check that the location into which you've cloned `cf-release` matches the source path
+for the mount in the `Vagrantfile`, remove the existing VM with `vagrant destroy` (be sure to run this from the
+`dea_next` directory so that you do not accidentally delete other VMs you may have running), and then retry
+VM creation and test execution.
+
+
+### Testing
 
 The DEA integration tests run against real Warden, directory, and NATS servers, so they must be run
 in a [Vagrant][vagrant] VM. The `bin` directory contains a helper script that runs the entire DEA test suite:
 
 [vagrant]: http://docs.vagrantup.com/v2/installation/index.html
 
-```bash
+```
+bash
 
-# Checkout the repo
-git clone https://github.com/cloudfoundry/dea_ng
+# Checkout the required repos
+mkdir ~/workspace
+cd ~/workspace
+git clone https://github.com/cloudfoundry/cf-release
+cd cf-release
+scripts/update
+bosh sync blobs # required to download rootfs blob
+cd src/dea-hm-workspace
+git checkout master
+git submodule update --init --recursive
+cd src/dea_next; git checkout master
 
 # Verify that Vagrant version is at least 1.5
 vagrant --version
 
 # Ensure the guest additions plugin is installed
-# NOTE: On mac, we had to 
-# export NOKOGIRI_USE_SYSTEM_LIBRARIES=true
-
 vagrant plugin install vagrant-vbguest
 
 # Run test suite in Vagrant vm
-bin/test_in_vm
+bin/run_specs_in_vm.sh
 ```
-Note that the integration tests stage and run real applications, which requires an internet connection.
+This will stand up the test virtual machine (if it is not already running) and run both the unit and integration
+suites.  Note that the integration tests stage and run real applications, which requires an internet connection.
 They take 5-10 minutes to run, depending on your connection speed.
 
 To run tests individually, there is a bit of setup:
 
 ```bash
+#start vagrant
+vagrant up
 
 #shell into the VM
 vagrant ssh
 
-# pull the latest warden
-cd /warden
+#create rootfs
+mkdir -p /tmp/warden/rootfs
+sudo tar -xvf /var/cf-release/.blobs/`basename $(readlink /var/cf-release/blobs/rootfs/*)` -C /tmp/warden/rootfs
+
 #start warden
-cd /warden/warden
+cd /var/cf-release/src/warden/warden
 sudo bundle install
-sudo bundle exec rake warden:start[config/test_vm.yml] &> /tmp/warden.log &
+bundle exec rake setup:bin
+sudo bundle exec rake warden:start[config/linux.yml] &> /tmp/warden.log &
 
 # start the DEA's dependencies
-cd /vagrant
+cd /var/cf-release/src/dea_next
+export GOPATH=$PWD/go
+go get github.com/nats-io/gnatsd
 sudo bundle install
 sudo bundle exec foreman start &> /tmp/foreman.log &
 
-#To run the tests (unit, integration or all):
+#To run the tests (unit or integration - these must be run separately if run as suites):
 bundle install
 bundle exec rspec spec/{spec_file_name}
 ```
@@ -129,6 +154,18 @@ in another ssh session:
 ```
 nats-sub ">" -s nats://localhost:4222
 ```
+## Testing the directory server
+
+Running the dea unit and integration tests via the `bin/run_specs_in_vm.sh` script
+will also run the directory server tests, but if you want to run tests against just the directory
+server, you can do the following once you have checked out the repository (replace
+`$DEA_REPO_ROOT` with the location of the `dea_ng` repo - in the above examples, it is
+`~/workspace/cf-release/src/dea-hm-workspace/src/dea_next`:
+
+cd $DEA_REPO_ROOT
+export GOPATH=$PWD/go
+go test -i -race directoryserver
+go test -v -race directoryserver
 
 ## Staging
 
@@ -142,9 +179,6 @@ See [staging.rb](lib/dea/responders/staging.rb) for staging flow.
   `staging.advertise` message (CC uses this to bootstrap)
 
 - `staging.<uuid>.start`: Stagers respond to requests on this subject to stage apps
-
-- `staging`: Stagers (in a queue group) respond to requests to stage an app
-  (old protocol)
 
 ## Warden rootfs
 

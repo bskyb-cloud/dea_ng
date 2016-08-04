@@ -23,7 +23,6 @@ module Dea
     include EventEmitter
 
     STAT_COLLECTION_INTERVAL_SECS = 10
-    NPROC_LIMIT = 512
 
     class State
       BORN = 'BORN'
@@ -294,7 +293,6 @@ module Dea
     end
 
     def setup
-      setup_stat_collector
       setup_link
       setup_resume_stopping
       setup_crash_handler
@@ -310,6 +308,10 @@ module Dea
 
     def file_descriptor_limit
       limits['fds'].to_i
+    end
+
+    def nproc_limit
+      @bootstrap.config.instance_nproc_limit
     end
 
     def instance_path_available?
@@ -570,14 +572,16 @@ module Dea
             Dea::StartupScriptGenerator.new(
               command,
               env.exported_user_environment_variables,
-              env.exported_system_environment_variables
+              env.exported_system_environment_variables,
+              bootstrap.config.post_setup_hook
             ).generate
         else
           start_script = env.exported_environment_variables + "./startup;\nexit"
         end
 
+        logger.info('DEA-RESOURCE-INFO', nproc_limit: self.nproc_limit)
         response = container.spawn(start_script,
-                                   container.resource_limits(self.file_descriptor_limit, NPROC_LIMIT))
+                                   container.resource_limits(self.file_descriptor_limit, self.nproc_limit))
 
         attributes['warden_job_id'] = response.job_id
 
@@ -638,6 +642,7 @@ module Dea
         if promise_health_check.resolve
           promise_state(State::STARTING, State::RUNNING).resolve
           logger.info('droplet.healthy')
+          emit_stats
           promise_exec_hook_script('after_start').resolve
         else
           logger.warn('droplet.unhealthy')
@@ -663,7 +668,8 @@ module Dea
         bind_mounts = [{'src_path' => droplet.droplet_dirname, 'dst_path' => droplet.droplet_dirname}]
         with_network = true
 
-        rootfs = config.rootfs_path(attributes['stack'])
+        stack = attributes['stack']
+        rootfs = config.rootfs_path(stack)
         raise StackNotFoundError.new("Stack #{stack} does not exist") if rootfs.nil?
 
         container.create_container(
@@ -797,20 +803,6 @@ module Dea
         end
 
         callback.call(error) unless callback.nil?
-      end
-    end
-
-    def setup_stat_collector
-      on(Entering.new(:running)) do
-        stat_collector.start
-      end
-
-      on(Transition.new(:running, :stopping)) do
-        stat_collector.stop
-      end
-
-      on(Transition.new(:running, :crashed)) do
-        stat_collector.stop
       end
     end
 
@@ -948,24 +940,12 @@ module Dea
       end
     end
 
-    def attributes_and_stats
-      ProtectedAttributesFilter.new(@attributes).to_hash.merge({
-          'used_memory_in_bytes' => used_memory_in_bytes,
-          'used_disk_in_bytes' => used_disk_in_bytes,
-          'computed_pcpu' => computed_pcpu
-      })
+    def protected_attributes
+      ProtectedAttributesFilter.new(@attributes).to_hash
     end
 
-    def used_memory_in_bytes
-      stat_collector.used_memory_in_bytes
-    end
-
-    def used_disk_in_bytes
-      stat_collector.used_disk_in_bytes
-    end
-
-    def computed_pcpu
-      stat_collector.computed_pcpu
+    def emit_stats
+      stat_collector.emit_metrics(Time.now)
     end
 
     def cpu_shares
@@ -979,7 +959,7 @@ module Dea
     end
 
     def stat_collector
-      @stat_collector ||= StatCollector.new(container)
+      @stat_collector ||= StatCollector.new(container, application_id, instance_index)
     end
 
     def staged_info
@@ -1091,18 +1071,6 @@ module Dea
       return nil unless limit
 
       { rate: limit['rate'], burst: limit['burst'] }
-    end
-
-    def logger
-      tags = {
-        'instance_id' => instance_id,
-        'instance_index' => instance_index,
-        'application_id' => application_id,
-        'application_version' => application_version,
-        'application_name' => application_name,
-      }
-
-      @logger ||= self.class.logger.tag(tags)
     end
   end
 end
