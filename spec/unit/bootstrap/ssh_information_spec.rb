@@ -6,9 +6,9 @@ describe Dea do
   include_context "bootstrap_setup"
 
   before do
-    bootstrap.unstub(:setup_directory_server)
-    bootstrap.unstub(:setup_directory_server_v2)
-    bootstrap.unstub(:directory_server_v2)
+    allow(bootstrap).to receive(:setup_directory_server).and_call_original
+    allow(bootstrap).to receive(:setup_directory_server_v2).and_call_original
+    allow(bootstrap).to receive(:directory_server_v2).and_call_original
   end
 
   describe "responses to messages received on 'dea.ssh.droplet'" do
@@ -67,8 +67,8 @@ describe Dea do
         
       run do
         first_instance = @instances[0]
-        first_instance.stub(:instance_ssh_port).and_return(1112)
-        first_instance.stub(:instance_ssh_key).and_return("abcdefg")
+        allow(first_instance).to receive(:instance_ssh_port).and_return(1112)
+        allow(first_instance).to receive(:instance_ssh_key).and_return("abcdefg")
           
         responses = ssh_droplet(:count => 1) do
           {
@@ -79,11 +79,11 @@ describe Dea do
         end
       end
 
-      responses.size.should == 1
-      responses[0]["ip"].should == VCAP.local_ip
-      responses[0]["sshkey"].should == "abcdefg"
-      responses[0]["port"].should == 1112
-      responses[0]["user"].should == "vcap"
+      expect(responses.size).to eq 1
+      expect(responses[0]["ip"]).to eq VCAP.local_ip
+      expect(responses[0]["sshkey"]).to eq "abcdefg"
+      expect(responses[0]["port"]).to eq 1112
+      expect(responses[0]["user"]).to eq "vcap"
     end
   end
 end

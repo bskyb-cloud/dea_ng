@@ -164,10 +164,10 @@ describe Dea::Env do
 
       context "when proxy serivce is not bound" do
         it "web proxy vars are not present" do
-          exported_system_vars.should_not have_key("WEB_PROXY_HOST")
-          exported_system_vars.should_not have_key("WEB_PROXY_PORT")
-          exported_system_vars.should_not have_key("WEB_PROXY_USER")
-          exported_system_vars.should_not have_key("WEB_PROXY_PASS")
+          expect(exported_system_vars).to_not have_key("WEB_PROXY_HOST")
+          expect(exported_system_vars).to_not have_key("WEB_PROXY_PORT")
+          expect(exported_system_vars).to_not have_key("WEB_PROXY_USER")
+          expect(exported_system_vars).to_not have_key("WEB_PROXY_PASS")
         end
       end
 
@@ -187,10 +187,10 @@ describe Dea::Env do
         end
 
         it "web proxy vars are present" do
-          exported_system_vars["WEB_PROXY_HOST"].should eq("proxycluster.com")
-          exported_system_vars["WEB_PROXY_PORT"].should eq(3128)
-          exported_system_vars["WEB_PROXY_USER"].should eq("user")
-          exported_system_vars["WEB_PROXY_PASS"].should eq("pass")
+          expect(exported_system_vars["WEB_PROXY_HOST"]).to eq("proxycluster.com")
+          expect(exported_system_vars["WEB_PROXY_PORT"]).to eq(3128)
+          expect(exported_system_vars["WEB_PROXY_USER"]).to eq("user")
+          expect(exported_system_vars["WEB_PROXY_PASS"]).to eq("pass")
         end
       end
 

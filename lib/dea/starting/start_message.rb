@@ -24,7 +24,7 @@ class StartMessage
   end
 
   def uris
-    message["uris"] or []
+    (message["uris"] || []).map { |uri| URI(uri) }
   end
 
   def executable_uri

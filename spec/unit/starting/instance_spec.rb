@@ -748,29 +748,29 @@ describe Dea::Instance do
 
     describe 'setting up the firewalls' do
       before do
-        instance.unstub(:promise_firewalls)
-        bootstrap.stub(:config).and_return('firewalls' => { 'script' => '/var/vcap/somescript', 'environment' => '12345' })
+        allow(instance).to receive(:promise_firewalls).and_call_original
+        allow(bootstrap).to receive(:config).and_return('firewalls' => { 'script' => '/var/vcap/somescript', 'environment' => '12345' })
 
         instance.attributes['services'] = [
           { 'credentials' => { 'host' => '10.0.0.4,10.0.0.5', 'port' => '80' } },
           { 'credentials' => { 'host' => '10.0.0.6', 'port' => '80' } }
         ]
 
-        instance.container.stub(:copy_in_file) do |src, dest|
-          src.should =~ /\/var\/vcap\/somescript/
-          dest.should =~ /\/tmp\/firewallscript/
+        allow(instance.container).to receive(:copy_in_file) do |src, dest|
+          expect(src).to match /\/var\/vcap\/somescript/
+          expect(dest).to match /\/tmp\/firewallscript/
 
-          instance.container.stub(:copy_in_file) do |src, dest|
-            dest.should =~ /\/home\/vcap\/logs\/firewalls.log/
+          allow(instance.container).to receive(:copy_in_file) do |src, dest|
+            expect(dest).to match /\/home\/vcap\/logs\/firewalls.log/
           end
         end
       end
 
       it 'should set call into warden and create rules' do
 
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ /chmod 755 \/tmp\/firewallscript && \/tmp\/firewallscript/
-          instance.container.stub(:run_script) do |_, script|
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match /chmod 755 \/tmp\/firewallscript && \/tmp\/firewallscript/
+          allow(instance.container).to receive(:run_script) do |_, script|
             script =~ /rm \/tmp\/firewallscript/
           end
           response = {
@@ -778,21 +778,21 @@ describe Dea::Instance do
           }
         end
 
-        instance.container.stub(:open_network_destination) do | host, port|
-          host.should =~ /10.0.0.1/
-          port.should == 80
-          instance.container.stub(:open_network_destination) do | host, port|
-            host.should =~ /10.0.0.2/
-            port.should == 80
-            instance.container.stub(:open_network_destination) do | host, port|
-              host.should =~ /10.0.0.4/
-              port.should == 80
-              instance.container.stub(:open_network_destination) do | host, port|
-                host.should =~ /10.0.0.5/
-                port.should == 80
-                instance.container.stub(:open_network_destination) do | host, port|
-                  host.should =~ /10.0.0.6/
-                  port.should == 80
+        allow(instance.container).to receive(:open_network_destination) do | host, port|
+          expect(host).to match /10.0.0.1/
+          expect(port).to eq 80
+          allow(instance.container).to receive(:open_network_destination) do | host, port|
+            expect(host).to match /10.0.0.2/
+            expect(port).to eq 80
+            allow(instance.container).to receive(:open_network_destination) do | host, port|
+              expect(host).to match /10.0.0.4/
+              expect(port).to eq 80
+              allow(instance.container).to receive(:open_network_destination) do | host, port|
+                expect(host).to match /10.0.0.5/
+                expect(port).to eq 80
+                allow(instance.container).to receive(:open_network_destination) do | host, port|
+                  expect(host).to match /10.0.0.6/
+                  expect(port).to eq 80
                 end
               end
             end
@@ -804,7 +804,7 @@ describe Dea::Instance do
 
       it 'should return an error if the start script fails' do
 
-        instance.container.stub(:run_script).and_raise(Container::WardenError.new("Script Failed", {:stdout => "error message" }))
+        allow(instance.container).to receive(:run_script).and_raise(Container::WardenError.new("Script Failed", {:stdout => "error message" }))
 
         expect {
           instance.promise_firewalls.resolve
@@ -814,23 +814,23 @@ describe Dea::Instance do
 
     describe 'getting the private key' do
       it 'should get private key from container' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{cat /home/vcap/.ssh/id_rsa}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{cat /home/vcap/.ssh/id_rsa}
           {:stdout => "fakekey"}
         end
-        instance.instance_ssh_key.should == "fakekey"
+        expect(instance.instance_ssh_key).to eq "fakekey"
       end
     end
 
     describe 'getting instance zone' do
       it 'should return CRAZY_TOWN' do
-        bootstrap.stub(:config).and_return('placement_properties' => { 'zone' => 'CRAZY_TOWN' })
-        instance.instance_zone.should == "CRAZY_TOWN"
+        allow(bootstrap).to receive(:config).and_return('placement_properties' => { 'zone' => 'CRAZY_TOWN' })
+        expect(instance.instance_zone).to eq "CRAZY_TOWN"
       end
 
       it 'should return empty string' do
-        bootstrap.stub(:config).and_return('a' => 'b')
-        instance.instance_zone.should == ""
+        allow(bootstrap).to receive(:config).and_return('a' => 'b')
+        expect(instance.instance_zone).to eq ""
       end
     end
 
@@ -867,75 +867,75 @@ describe Dea::Instance do
       end
 
       it 'should generate the host keys' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{ssh-keygen -t dsa -N "" -f /etc/ssh/ssh_host_dsa_key}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{ssh-keygen -t dsa -N "" -f /etc/ssh/ssh_host_dsa_key}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should generate the host keys' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{ssh-keygen -t rsa -N "" -f /etc/ssh/ssh_host_rsa_key}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{ssh-keygen -t rsa -N "" -f /etc/ssh/ssh_host_rsa_key}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should make the ssh run directory' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{mkdir -p /var/run/sshd}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{mkdir -p /var/run/sshd}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should start sshd' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{/usr/sbin/sshd}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{/usr/sbin/sshd}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should generate user key' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{mkdir -p /home/vcap/.ssh}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{mkdir -p /home/vcap/.ssh}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should generate user key' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{ssh-keygen -q -N "" -f /home/vcap/.ssh/id_rsa}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should apply public key' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{cp /home/vcap/.ssh/id_rsa.pub /home/vcap/.ssh/authorized_keys}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'should chown ssh dir' do
-        instance.container.stub(:run_script) do |_, script|
-          script.should =~ %r{chown -R vcap:vcap /home/vcap/.ssh}
+        allow(instance.container).to receive(:run_script) do |_, script|
+          expect(script).to match %r{chown -R vcap:vcap /home/vcap/.ssh}
         end
 
-        expect_start.to_not raise_error
-        instance.exit_description.should be_empty
+        expect { expect_start }.to_not raise_error
+        expect(instance.exit_description).to be_empty
       end
 
       it 'can fail by run failing' do

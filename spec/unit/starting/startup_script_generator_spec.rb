@@ -46,8 +46,8 @@ describe Dea::StartupScriptGenerator do
       end
 
       it "print env to a log file after user envs" do
-        script.should include "env > logs/env.log"
-        script.should match /usrval1.*env\.log/m
+        expect(script).to include "env > logs/env.log"
+        expect(script).to match /usrval1.*env\.log/m
       end
     end
 
