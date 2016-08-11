@@ -455,8 +455,9 @@ module Dea
 
     def setup_firewall(credentials)
         credentials['host'].split(/\s*,\s*/).each do |host|
-            Dea::Loggregator.emit(application_id, "Opening up service firewall to #{host}:#{credentials['port']}")
-            container.open_network_destination(Resolv.getaddress(host), credentials['port'].to_i)
+          ip = %x[dig +short #{host}].strip
+          Dea::Loggregator.emit(application_id, "Opening up service firewall to #{host}:#{credentials['port']}")
+            container.open_network_destination(ip, credentials['port'].to_i)
         end
     end
 
@@ -475,17 +476,19 @@ module Dea
               if response[:stdout]
                 response[:stdout].split(/\n/).each do |line|
                   host, port = line.split(/:/)
+                  ip = %x[dig +short #{host}].strip
                   Dea::Loggregator.emit(application_id, "Opening up user requested firewall to #{host}:#{port}")
-                  container.open_network_destination(Resolv.getaddress(host), port.to_i)
+                  container.open_network_destination(ip, port.to_i)
                 end
               end
 
               attributes['services'].each do |svc|
                 if svc['credentials']['firewall_allow_rules']
                   svc['credentials']['firewall_allow_rules'].split(/\s*,\s*/).each do |network|
-                    port=svc['credentials']['port']
-                    Dea::Loggregator.emit(application_id, "Opening up service firewall based on firewall_allow_rules to #{network}:#{svc['credentials']['port']}")
-                    container.open_network_destination(Resolv.getaddress(network), svc['credentials']['port'].to_i)
+                    port = svc['credentials']['port']
+                    ip = %x[dig +short #{network}].strip
+                    Dea::Loggregator.emit(application_id, "Opening up service firewall based on firewall_allow_rules to #{network}:#{port}")
+                    container.open_network_destination(ip, port.to_i)
                   end
                 else
                   if svc['credentials'].has_key?('host')

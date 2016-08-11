@@ -238,8 +238,9 @@ module Dea
         begin
           if staging_config["http_proxy"]
             location = URI(staging_config["http_proxy"])
-            logger.debug("Opening up firewall to #{Resolv.getaddress(location.host)} #{location.port}")
-            container.open_network_destination(Resolv.getaddress(location.host), location.port)
+            ip = %x[dig +short #{location.host}].strip
+            logger.debug("Opening up firewall to #{ip} #{location.port}")
+            container.open_network_destination(ip, location.port)
           end
         rescue Exception => e
           logger.error("Failed to open firewalls #{e.message}")
