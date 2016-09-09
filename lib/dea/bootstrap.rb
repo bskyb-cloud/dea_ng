@@ -10,31 +10,28 @@ require "loggregator_emitter"
 
 require "thin"
 
-require "vcap/common"
-
 require "dea/config"
 require "container/container"
 require "dea/droplet_registry"
 require "dea/nats"
 require "dea/protocol"
+require "dea/pid_file"
+require "dea/utils"
 require "dea/resource_manager"
 require "dea/router_client"
 require "dea/loggregator"
-
 require "dea/lifecycle/signal_handler"
-
 require "dea/directory_server/directory_server_v2"
-
+require "dea/http/httpserver"
 require "dea/utils/download"
-
+require "dea/utils/hm9000"
+require 'dea/utils/cloud_controller_client'
 require "dea/staging/staging_task_registry"
 require "dea/staging/staging_task"
-
 require "dea/starting/instance"
 require "dea/starting/instance_uri_updater"
 require "dea/starting/instance_manager"
 require "dea/starting/instance_registry"
-
 require "dea/snapshot"
 
 Dir[File.join(File.dirname(__FILE__), "responders/*.rb")].each { |f| require(f) }
@@ -42,6 +39,7 @@ Dir[File.join(File.dirname(__FILE__), "responders/*.rb")].each { |f| require(f) 
 module Dea
   class Bootstrap
     DEFAULT_HEARTBEAT_INTERVAL = 10 # In secs
+    DEFAULT_METRICS_INTERVAL = 30
     DROPLET_REAPER_INTERVAL_SECS = 60
     CONTAINER_REAPER_INTERVAL_SECS = 30
 
@@ -51,9 +49,11 @@ module Dea
 
     attr_reader :config
     attr_reader :nats, :responders
-    attr_reader :directory_server_v2
+    attr_reader :directory_server_v2, :http_server
     attr_reader :staging_task_registry
     attr_reader :uuid
+    attr_reader :hm9000, :cloud_controller_client
+    attr_reader :staging_responder, :http_staging_responder
 
     def initialize(config = {})
       @config = Config.new(config)
@@ -62,7 +62,12 @@ module Dea
     end
 
     def local_ip
-      @local_ip ||= VCAP.local_ip
+      @local_ip ||= Dea.local_ip
+    end
+
+    def uptime
+      @start_time ||= Time.now
+      Time.now - @start_time
     end
 
     def validate_config
@@ -77,8 +82,9 @@ module Dea
       validate_config
 
       @uuid = SecureRandom.uuid
-      setup_nats
       setup_logging
+      setup_nats
+      setup_hm9000
       setup_loggregator
       setup_warden_container_lister
       setup_droplet_registry
@@ -88,13 +94,16 @@ module Dea
       setup_snapshot
       setup_resource_manager
       setup_router_client
+      setup_cloud_controller_client
+      setup_http_server
       setup_directory_server_v2
       setup_directories
       setup_pid_file
+      setup_staging_responders
     end
 
     def start_metrics
-      EM.add_periodic_timer(DEFAULT_HEARTBEAT_INTERVAL) do
+      EM.add_periodic_timer(DEFAULT_METRICS_INTERVAL) do
         Fiber.new do
           periodic_metrics_emit
         end.resume
@@ -192,7 +201,7 @@ module Dea
     attr_reader :evac_handler, :shutdown_handler
 
     def setup_signal_handlers
-      @evac_handler ||= EvacuationHandler.new(nats, locator_responders, instance_registry, logger, config)
+      @evac_handler ||= EvacuationHandler.new(self, nats, locator_responders, instance_registry, @staging_task_registry, logger, config)
       @shutdown_handler ||= ShutdownHandler.new(nats, locator_responders, instance_registry, @staging_task_registry, droplet_registry, @directory_server_v2, logger)
       @sig_handler ||= SignalHandler.new(uuid, local_ip, nats, locator_responders, instance_registry, evac_handler, shutdown_handler, logger)
       @sig_handler.setup do |signal, &handler|
@@ -215,7 +224,7 @@ module Dea
       path = config["pid_filename"]
 
       begin
-        pid_file = VCAP::PidFile.new(path, false)
+        pid_file = PidFile.new(path, false)
         pid_file.unlink_at_exit
       rescue => err
         logger.error("Cannot create pid file at #{path} (#{err})")
@@ -250,6 +259,13 @@ module Dea
       end
     end
 
+    def setup_http_server
+      @http_server = Dea::HttpServer.new(self, config)
+      if @http_server.enabled?
+        @local_dea_service = "https://#{config['service_name']}:#{http_server.port}"
+      end
+    end
+
     def setup_directory_server_v2
       v2_port = config["directory_server"]["v2_port"]
       @directory_server_v2 = Dea::DirectoryServerV2.new(config["domain"], v2_port, router_client, config)
@@ -260,17 +276,30 @@ module Dea
       @nats = Dea::Nats.new(self, config)
     end
 
-    attr_reader :staging_responder
+    def setup_hm9000
+      hb_interval = config["intervals"]["heartbeat"] || DEFAULT_HEARTBEAT_INTERVAL
+      @hm9000 = HM9000.new(config["hm9000"]["listener_uri"], config["hm9000"]["key_file"], config["hm9000"]["cert_file"], config["hm9000"]["ca_file"], hb_interval, logger)
+    end
+
+    def setup_cloud_controller_client
+      @cloud_controller_client = Dea::CloudControllerClient.new(uuid, config['cc_url'], logger)
+    end
+
+    def setup_staging_responders
+      @staging_responder = Dea::Responders::Staging.new(self, staging_task_registry, directory_server_v2, resource_manager, config)
+      @http_staging_responder = Dea::Responders::HttpStaging.new(@staging_responder, cloud_controller_client)
+    end
 
     def start_nats
       nats.start
+    end
 
-      @staging_responder = Dea::Responders::Staging.new(nats, uuid, self, staging_task_registry, directory_server_v2, resource_manager, config)
+    def start_nats_staging_request_handler
+      @nats_staging_responder = Dea::Responders::NatsStaging.new(nats, uuid, @staging_responder, config)
 
       @responders = [
-        Dea::Responders::DeaLocator.new(nats, uuid, resource_manager, config),
-        Dea::Responders::StagingLocator.new(nats, uuid, resource_manager, config),
-        @staging_responder,
+        Dea::Responders::DeaLocator.new(nats, uuid, resource_manager, config, @local_dea_service),
+        @nats_staging_responder,
       ].each(&:start)
     end
 
@@ -279,11 +308,11 @@ module Dea
     def locator_responders
       return [] unless @responders
       @responders.select do |r|
-        r.is_a?(Dea::Responders::DeaLocator) ||
-          r.is_a?(Dea::Responders::StagingLocator)
+        r.is_a?(Dea::Responders::DeaLocator)
       end
     end
 
+    attr_reader :heartbeat_timer
     def setup_sweepers
       # Heartbeats of instances we're managing
       hb_interval = config["intervals"]["heartbeat"] || DEFAULT_HEARTBEAT_INTERVAL
@@ -322,9 +351,11 @@ module Dea
 
       snapshot.load
 
-      setup_sweepers
       start_nats
+      setup_sweepers
+      start_nats_staging_request_handler
       setup_register_routes
+      http_server.start
       directory_server_v2.start
       start_metrics
 
@@ -370,10 +401,6 @@ module Dea
       register_directory_server_v2
     end
 
-    def handle_dea_directed_start(message)
-      start_app(message.data)
-    end
-
     def start_app(data)
       return if evac_handler.evacuating? || shutdown_handler.shutting_down?
 
@@ -391,7 +418,7 @@ module Dea
           {'app_id'  => message.data['droplet'].to_s},
           nil,
         )
-        staging_responder.handle_stop(staging_stop_msg)
+        @nats_staging_responder.handle_stop(staging_stop_msg) if @nats_staging_responder
       end
 
       instance_registry.instances_filtered_by_message(message) do |instance|
@@ -459,16 +486,28 @@ module Dea
         instance.starting? || instance.running? || instance.crashed? || instance.evacuating?
       end
 
-      hbs = Dea::Protocol::V1::HeartbeatResponse.generate(self, instances)
-      nats.publish("dea.heartbeat", hbs)
+      hbs = Dea::Protocol::V1::HeartbeatResponse.generate(uuid, instances)
+      hm9000.send_heartbeat(hbs)
 
       nil
     end
 
     def periodic_metrics_emit
+      mem_required = config.minimum_staging_memory_mb
+      disk_required = config.minimum_staging_disk_mb
+
+      Dea::Loggregator.emit_value('uptime', uptime.to_i, 's')
       Dea::Loggregator.emit_value('remaining_memory', resource_manager.remaining_memory, 'mb')
       Dea::Loggregator.emit_value('remaining_disk', resource_manager.remaining_disk, 'mb')
+      Dea::Loggregator.emit_value('available_memory_ratio', resource_manager.available_memory_ratio, 'P')
+      Dea::Loggregator.emit_value('available_disk_ratio', resource_manager.available_disk_ratio, 'P')
       Dea::Loggregator.emit_value('instances', instance_registry.size, 'instances')
+      Dea::Loggregator.emit_value('reservable_stagers', resource_manager.number_reservable(mem_required, disk_required), 'stagers')
+      Dea::Loggregator.emit_value('avg_cpu_load', resource_manager.cpu_load_average, 'loadavg')
+      Dea::Loggregator.emit_value('mem_used_bytes', resource_manager.memory_used_bytes, 'B')
+      Dea::Loggregator.emit_value('mem_free_bytes', resource_manager.memory_free_bytes, 'B')
+
+      instance_registry.emit_metrics_state
       instance_registry.emit_container_stats
     end
 
@@ -497,6 +536,11 @@ module Dea
           logger.error("em-download.failed", error: e, backtrace: e.backtrace)
         end
       end
+    end
+
+    def stage_app_request(data)
+      return if !@http_staging_responder
+      @http_staging_responder.handle(data)
     end
 
     private

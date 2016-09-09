@@ -3,6 +3,11 @@
 # Base directory for dea, application directories, dea temp files, etc. are all relative to this.
 base_dir: /tmp/dea_ng
 
+ssl:
+  port: 8443
+  key_file: spec/fixtures/certs/server.key
+  cert_file: spec/fixtures/certs/server.crt
+
 logging:
   level: debug
 
@@ -16,7 +21,7 @@ resources:
   disk_overcommit_factor: 2
 
 nats_servers:
-  - nats://localhost:4222/
+  - nats://127.0.0.1:4222/
 
 pid_filename: /tmp/dea_ng.pid
 
@@ -27,7 +32,7 @@ evacuation_bail_out_time_in_seconds: 900
 default_health_check_timeout: 60 # 1 minute
 
 index: 0
-domain: "localhost.xip.io"
+domain: "domain.example.com"
 
 staging:
   enabled: true
@@ -72,7 +77,13 @@ stacks:
 placement_properties:
   zone: "CRAZY_TOWN"
 
-cc_url: https://user:password@api.localhost.xip.io
+cc_url: https://user:password@cloud_controller_ng.service.cf.internal
+
+hm9000:
+  listener_uri: https://hm9000.service.cf.internal:5335
+  key_file: spec/fixtures/certs/hm9000_client.key
+  cert_file: spec/fixtures/certs/hm9000_client.crt
+  ca_file: spec/fixtures/certs/hm9000_ca.crt
 
 # firewalls:
 #   script: /var/vcap/packages/dea_next/firewalls/obtain_firewall_config.rb

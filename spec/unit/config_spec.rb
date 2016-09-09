@@ -20,7 +20,13 @@ module Dea
           "v2_port" => 7,
           "file_api_port" => 8
         },
-        "cc_url" => "cc.example.com"
+        "cc_url" => "cc.example.com",
+        "hm9000" => {
+          "listener_uri" => "https://a.b.c.d:1234",
+          "key_file" => fixture("/certs/hm9000_client.key"),
+          "cert_file" => fixture("/certs/hm9000_client.crt"),
+          "ca_file" => fixture("/certs/hm9000_ca.crt")
+        }
       }
     end
     let(:disk_inode_limit) { 123456 }
@@ -34,10 +40,25 @@ module Dea
       end
     end
 
+    describe '#validate' do
+      before do
+        allow(subject).to receive(:verify_hm9000_certs)
+      end
+
+      it 'calls the correct validation methods' do
+        expect(subject).to receive(:verify_hm9000_certs)
+        expect(subject).to receive(:verify_ssl_certs)
+        expect(subject).to receive(:validate_router_register_interval!)
+        expect { subject.validate }.to_not raise_error
+      end
+    end
+
     describe "#initialize" do
       let(:config_hash) { { } }
 
       it "can load" do
+        allow(File).to receive(:exists?).with('spec/fixtures/spec/hm9000_client.crt').and_return(true)
+        allow(File).to receive(:exists?).with('spec/fixtures/spec/hm9000_client.key').and_return(true)
         expect(subject).to be_a(Dea::Config)
       end
 
@@ -230,6 +251,112 @@ module Dea
         it "is sets it to the default value" do
           expect { config.validate_router_register_interval! }.to_not raise_error
           expect(config["intervals"]["router_register_in_seconds"]).to eq(20)
+        end
+      end
+    end
+
+    describe '#verify_hm9000_certs' do
+      context 'when all certs specified exist' do
+        before do
+          config_hash['hm9000'] = {
+            "key_file" => fixture("/certs/hm9000_client.key"),
+            "cert_file" => fixture("/certs/hm9000_client.crt"),
+            "ca_file" => fixture("/certs/hm9000_ca.crt")
+          }
+        end
+
+        it 'verifies their existence' do
+          expect{ config.verify_hm9000_certs }.to_not raise_error
+        end
+      end
+
+      context 'when none of the hm9000 certs exist' do
+        let(:missing_files) { [ 'fake-client-key', 'fake-cert-file', 'fake-ca-file' ] }
+        let(:missing_file_list) { missing_files.join(', ')}
+
+        before do
+          config_hash['hm9000'] = {
+            "key_file" => missing_files[0],
+            "cert_file" => missing_files[1],
+            "ca_file" => missing_files[2]
+          }
+        end
+
+        it 'raises an error' do
+          expect{ config.verify_hm9000_certs }.to raise_error "Invalid HM9000 Certs: One or more files not found: #{missing_file_list}"
+        end
+      end
+
+      context 'when at least one  of the hm9000 certs does not exist' do
+        let(:missing_file) { 'fake-ca-file' }
+        before do
+          config_hash['hm9000'] = {
+            "key_file" => fixture("/certs/hm9000_client.key"),
+            "cert_file" => fixture("/certs/hm9000_client.crt"),
+            "ca_file" => missing_file
+          }
+        end
+
+        it 'raises an error' do
+          expect{ config.verify_hm9000_certs }.to raise_error "Invalid HM9000 Certs: One or more files not found: #{missing_file}"
+        end
+      end
+    end
+
+    describe '#verify_ssl_certs' do
+      context 'when ssl is not enabled' do
+        before do
+          config_hash.delete('ssl')
+        end
+
+        it 'passes validation' do
+          expect{ config.verify_ssl_certs }.to_not raise_error
+        end
+      end
+
+      context 'when all certs specified exist' do
+        before do
+          config_hash['ssl'] = {
+            "port" => 666,
+            "key_file" => fixture("/certs/hm9000_client.key"),
+            "cert_file" => fixture("/certs/hm9000_client.crt")
+          }
+        end
+
+        it 'verifies their existence' do
+          expect{ config.verify_ssl_certs }.to_not raise_error
+        end
+      end
+
+      context 'when none of the ssl certs exist' do
+        let(:missing_files) { [ 'fake-client-key', 'fake-cert-file'] }
+        let(:missing_file_list) { missing_files.join(', ')}
+
+        before do
+          config_hash['ssl'] = {
+            "port" => 5050,
+            "key_file" => missing_files[0],
+            "cert_file" => missing_files[1]
+          }
+        end
+
+        it 'raises an error' do
+          expect{ config.verify_ssl_certs }.to raise_error "Invalid SSL Certs: One or more files not found: #{missing_file_list}"
+        end
+      end
+
+      context 'when at least one  of the ssl certs does not exist' do
+        let(:missing_file) { 'fake-ca-file' }
+        before do
+          config_hash['ssl'] = {
+            "port" => 5280,
+            "key_file" => fixture("/certs/hm9000_client.key"),
+            "cert_file" => missing_file
+          }
+        end
+
+        it 'raises an error' do
+          expect{ config.verify_ssl_certs }.to raise_error "Invalid SSL Certs: One or more files not found: #{missing_file}"
         end
       end
     end

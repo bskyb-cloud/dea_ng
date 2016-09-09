@@ -3,7 +3,6 @@
 require 'membrane'
 require 'steno'
 require 'steno/core_ext'
-require 'vcap/common'
 require 'yaml'
 require 'tempfile'
 require 'resolv'
@@ -11,12 +10,14 @@ require 'resolv'
 require 'dea/env'
 require 'dea/health_check/port_open'
 require 'dea/health_check/state_file_ready'
+require "dea/utils"
 require 'dea/promise'
 require 'dea/stat_collector'
 require 'dea/task'
 require 'dea/utils/event_emitter'
 require 'dea/starting/startup_script_generator'
 require 'dea/user_facing_errors'
+require 'dea/utils/uri_cleaner'
 
 module Dea
   class Instance < Task
@@ -80,6 +81,9 @@ module Dea
         end
       end
     end
+
+    STATES = [State::BORN, State::STARTING, State::RUNNING, State::STOPPING,
+      State::STOPPED, State::CRASHED, State::RESUMING, State::EVACUATING]
 
     class Transition < Struct.new(:from, :to)
       def initialize(*args)
@@ -277,10 +281,10 @@ module Dea
       @attributes['application_uris'] ||= []
 
       # Generate unique ID
-      @attributes['instance_id'] ||= VCAP.secure_uuid
+      @attributes['instance_id'] ||= Dea.secure_uuid
 
       # Contatenate 2 UUIDs to genreate a 32 chars long private_instance_id
-      @attributes['private_instance_id'] ||= VCAP.secure_uuid + VCAP.secure_uuid
+      @attributes['private_instance_id'] ||= Dea.secure_uuid + Dea.secure_uuid
 
       self.state = State::BORN
 
@@ -391,7 +395,7 @@ module Dea
     end
 
     def change_instance_id!
-      attributes['instance_id'] = VCAP.secure_uuid
+      attributes['instance_id'] = Dea.secure_uuid
     end
 
     def to_s
@@ -582,7 +586,6 @@ module Dea
           start_script = env.exported_environment_variables + "./startup;\nexit"
         end
 
-        logger.info('DEA-RESOURCE-INFO', nproc_limit: self.nproc_limit)
         response = container.spawn(start_script,
                                    container.resource_limits(self.file_descriptor_limit, self.nproc_limit))
 
@@ -733,7 +736,7 @@ module Dea
           else
             logger.debug('droplet.download.succeeded',
                          duration: p.elapsed_time,
-                         destination: droplet.droplet_path)
+                         destination: URICleaner.clean(droplet.droplet_path))
 
             p.deliver
           end
@@ -945,6 +948,10 @@ module Dea
 
     def protected_attributes
       ProtectedAttributesFilter.new(@attributes).to_hash
+    end
+
+    def used_memory_in_bytes
+      stat_collector.used_memory_in_bytes
     end
 
     def emit_stats

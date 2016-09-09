@@ -8,6 +8,7 @@ module Dea
     DEFAULT_INSTANCE_DISK_INODE_LIMIT = 200_000
     DEFAULT_INSTANCE_NPROC_LIMIT = 512
     DEFAULT_ROUTER_REGISTER_INTERVAL_IN_SECONDS = 20
+    DEFAULT_CA_CERT_FILE = '/etc/ssl/certs/ca-certificates.crt'
 
     EMPTY_CONFIG = {
       "intervals" => {
@@ -70,6 +71,13 @@ module Dea
           },
 
           "cc_url" => String,
+
+          "hm9000" => {
+            "listener_uri" => String,
+            "key_file" => String,
+            "cert_file" => String,
+            "ca_file" => String,
+          },
 
           optional("crash_lifetime_secs") => Integer,
           optional("crash_block_usage_ratio_threshold") => Float,
@@ -142,10 +150,17 @@ module Dea
 
           optional("post_setup_hook") => String,
 
+          optional("ssl") => {
+            "port" => Integer,
+            "key_file" => String,
+            "cert_file" => String,
+          },
+
           optional("firewalls") => {
               optional("script") => String,
               optional("args") => String
-          }
+          },
+
         }
       end
     end
@@ -175,11 +190,41 @@ module Dea
     def validate
       self.class.schema.validate(@config)
       validate_router_register_interval!
+      verify_hm9000_certs
+      verify_ssl_certs
     end
 
     def validate_router_register_interval!
       @config["intervals"]["router_register_in_seconds"] ||= DEFAULT_ROUTER_REGISTER_INTERVAL_IN_SECONDS
       raise "Invalid router register interval" if @config["intervals"]["router_register_in_seconds"] <= 0
+    end
+
+    def verify_hm9000_certs
+      hm9000 = @config['hm9000']
+
+      missing_files = []
+      ['key_file', 'cert_file', 'ca_file'].each do |file|
+        missing_files << hm9000[file] if !File.exists?(hm9000[file])
+      end
+
+      return if missing_files.length == 0
+
+      raise "Invalid HM9000 Certs: One or more files not found: #{missing_files.join(', ')}"
+    end
+
+    def verify_ssl_certs
+      ssl = @config['ssl']
+
+      if ssl
+        missing_files = []
+        ['key_file', 'cert_file'].each do |file|
+          missing_files << ssl[file] if !File.exists?(ssl[file])
+        end
+
+        return if missing_files.length == 0
+
+        raise "Invalid SSL Certs: One or more files not found: #{missing_files.join(', ')}"
+      end
     end
 
     def crashes_path

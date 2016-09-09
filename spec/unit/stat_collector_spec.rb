@@ -49,6 +49,7 @@ describe Dea::StatCollector do
 
   it 'initializes the statistic variables to 0' do
     expect(collector.computed_pcpu).to eq(0)
+    expect(collector.computed_dcpu).to eq(0)
     expect(collector.used_memory_in_bytes).to eq(0)
     expect(collector.used_disk_in_bytes).to eq(0)
   end
@@ -92,6 +93,7 @@ describe Dea::StatCollector do
       collector.emit_metrics(Time.now())
 
       expect(collector.computed_pcpu).to eq(0)
+      expect(collector.computed_dcpu).to eq(0)
       expect(collector.used_memory_in_bytes).to eq(expected_memory_usage)
       expect(collector.used_disk_in_bytes).to eq(expected_disk_usage)
     end
@@ -152,7 +154,7 @@ describe Dea::StatCollector do
         time_between_stats = (Dea::StatCollector::INTERVAL * NANOSECONDS_PER_SECOND)
 
         expect(@emitter.messages['application-id'].length).to eq(2)
-        expect(@emitter.messages['application-id'][1][:cpuPercentage]).to eq((10_000_000_000 - 5_000_000) / time_between_stats)
+        expect(@emitter.messages['application-id'][1][:cpuPercentage]).to eq((10_000_000_000 - 5_000_000) * 100 / time_between_stats)
       end
 
       it 'updates the statistic variables' do
@@ -163,9 +165,11 @@ describe Dea::StatCollector do
         collector.emit_metrics(time + Dea::StatCollector::INTERVAL)
 
         time_between_stats = (Dea::StatCollector::INTERVAL * NANOSECONDS_PER_SECOND)
-        expected_pcpu = (10_000_000_000 - 5_000_000) / time_between_stats
+        expected_pcpu = (10_000_000_000 - 5_000_000) * 100 / time_between_stats
+        expected_dcpu = expected_pcpu / 100.0
 
         expect(collector.computed_pcpu).to eq(expected_pcpu)
+        expect(collector.computed_dcpu).to eq(expected_dcpu)
         expect(collector.used_memory_in_bytes).to eq(1000)
         expect(collector.used_disk_in_bytes).to eq(78)
       end
@@ -190,7 +194,7 @@ describe Dea::StatCollector do
           collector.emit_metrics(time + Dea::StatCollector::INTERVAL)
 
           time_between_stats = (Dea::StatCollector::INTERVAL * NANOSECONDS_PER_SECOND)
-          expected_pcpu = (10_000_000_000 - 5_000_000) / time_between_stats
+          expected_pcpu = (10_000_000_000 - 5_000_000) * 100 / time_between_stats
 
           expect(@emitter.messages['application-id'].length).to eq(2)
           expect(@emitter.messages['application-id'][1][:cpuPercentage]).to eq(expected_pcpu)

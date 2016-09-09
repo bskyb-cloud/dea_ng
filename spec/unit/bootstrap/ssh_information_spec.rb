@@ -80,7 +80,7 @@ describe Dea do
       end
 
       expect(responses.size).to eq 1
-      expect(responses[0]["ip"]).to eq VCAP.local_ip
+      expect(responses[0]["ip"]).to eq Dea.local_ip
       expect(responses[0]["sshkey"]).to eq "abcdefg"
       expect(responses[0]["port"]).to eq 1112
       expect(responses[0]["user"]).to eq "vcap"

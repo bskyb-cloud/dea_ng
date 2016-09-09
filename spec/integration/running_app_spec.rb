@@ -138,7 +138,7 @@ describe "Running an app", :type => :integration, :requires_warden => true do
             NATS.request("dea.ssh.droplet", droplet_message, :timeout => 2) do |response_json|
               response = JSON.parse(response_json)
               
-              response["ip"].should == VCAP.local_ip
+              response["ip"].should == Dea.local_ip
               response["sshkey"].should =~ /-----BEGIN RSA PRIVATE KEY-----/
               response["user"].should == "vcap"
               response["port"].to_s.should =~ /^\d+$/
@@ -165,8 +165,7 @@ describe "Running an app", :type => :integration, :requires_warden => true do
             NATS.request("dea.find.droplet", droplet_message, :timeout => 5) do |response|
               droplet_info = Yajl::Parser.parse(response)
               ustats = droplet_info['stats']['usage']
-              expect(ustats['cpu']).to eq(0)
-              expect(ustats['mem']).to be > 0
+              expect(ustats).to include('cpu', 'mem')
               expect(ustats['disk']).to eq(65536)
               NATS.stop
             end

@@ -14,7 +14,13 @@ describe Dea::Bootstrap do
       "base_dir" => tmpdir,
       "directory_server" => {},
       "domain" => "default",
-      "logging" => {}
+      "logging" => {},
+      "hm9000" => {
+        "listener_uri" => "https://foobar.com:12345",
+        "key_file" => fixture("/certs/hm9000_client.key"),
+        "cert_file" => fixture("/certs/hm9000_client.crt"),
+        "ca_file" => fixture("/certs/hm9000_ca.crt"),
+      }
     }
   end
 
@@ -41,7 +47,6 @@ describe Dea::Bootstrap do
     it 'sets up the appropriate components' do
       expect(bootstrap).to receive(:validate_config)
       expect(SecureRandom).to receive(:uuid)
-      expect(bootstrap).to receive(:setup_nats)
       expect(bootstrap).to receive(:setup_logging)
       expect(bootstrap).to receive(:setup_loggregator)
       expect(bootstrap).to receive(:setup_warden_container_lister)
@@ -52,9 +57,14 @@ describe Dea::Bootstrap do
       expect(bootstrap).to receive(:setup_snapshot)
       expect(bootstrap).to receive(:setup_resource_manager)
       expect(bootstrap).to receive(:setup_router_client)
+      expect(bootstrap).to receive(:setup_http_server)
       expect(bootstrap).to receive(:setup_directory_server_v2)
       expect(bootstrap).to receive(:setup_directories)
       expect(bootstrap).to receive(:setup_pid_file)
+      expect(bootstrap).to receive(:setup_hm9000)
+      expect(bootstrap).to receive(:setup_cloud_controller_client)
+      expect(bootstrap).to receive(:setup_nats).ordered
+      expect(bootstrap).to receive(:setup_staging_responders).ordered
 
       bootstrap.setup
     end
@@ -349,7 +359,7 @@ describe Dea::Bootstrap do
   describe '#start_metrics' do
     it 'sets up a periodic timer' do
       expect(bootstrap).to receive(:periodic_metrics_emit)
-      expect(EM).to receive(:add_periodic_timer).with(10) { |&block| block.call }
+      expect(EM).to receive(:add_periodic_timer).with(30) { |&block| block.call }
 
       begin
         with_event_machine do
@@ -373,26 +383,36 @@ describe Dea::Bootstrap do
       bootstrap.setup_instance_registry
       bootstrap.setup_resource_manager
 
-      allow(bootstrap.instance_registry).to receive(:size).and_return(5)
-      allow(bootstrap.resource_manager).to receive(:remaining_memory).and_return(115)
-      allow(bootstrap.resource_manager).to receive(:remaining_disk).and_return(666)
+      bootstrap.instance_registry.register(Dea::Instance.new(bootstrap, {}))
+      allow(bootstrap.config).to receive(:minimum_staging_memory_mb).and_return(333)
+      allow(bootstrap.config).to receive(:minimum_staging_disk_mb).and_return(444)
     end
 
     it 'emits the correct metrics' do
+      expect(bootstrap.resource_manager).to receive(:remaining_memory).and_return(115)
+      expect(bootstrap.resource_manager).to receive(:remaining_disk).and_return(666)
+      expect(bootstrap.resource_manager).to receive(:available_memory_ratio).and_return(0.22)
+      expect(bootstrap.resource_manager).to receive(:available_disk_ratio).and_return(0.86)
+      expect(bootstrap.resource_manager).to receive(:cpu_load_average).and_return(0.15)
+      expect(bootstrap.resource_manager).to receive(:memory_used_bytes).and_return(1000)
+      expect(bootstrap.resource_manager).to receive(:memory_free_bytes).and_return(100)
+
+      expect(bootstrap.instance_registry).to receive(:emit_metrics_state)
       expect(bootstrap.instance_registry).to receive(:emit_container_stats)
+      expect(bootstrap.resource_manager).to receive(:number_reservable).with(333, 444).and_return(5)
+
       bootstrap.periodic_metrics_emit
 
-      expect(@emitter.messages['remaining_memory'].length).to eq(1)
-      expect(@emitter.messages['remaining_memory'][0][:value]).to eq(115)
-      expect(@emitter.messages['remaining_memory'][0][:unit]).to eq('mb')
-
-      expect(@emitter.messages['remaining_disk'].length).to eq(1)
-      expect(@emitter.messages['remaining_disk'][0][:value]).to eq(666)
-      expect(@emitter.messages['remaining_disk'][0][:unit]).to eq('mb')
-
-      expect(@emitter.messages['instances'].length).to eq(1)
-      expect(@emitter.messages['instances'][0][:value]).to eq(5)
-      expect(@emitter.messages['instances'][0][:unit]).to eq('instances')
+      expect(@emitter.messages['uptime']).to contain_exactly(include(value: a_kind_of(Integer), unit: 's'))
+      expect(@emitter.messages['remaining_memory']).to eq([{value: 115, unit: "mb"}])
+      expect(@emitter.messages['remaining_disk']).to eq([{value: 666, unit: "mb"}])
+      expect(@emitter.messages['instances']).to eq([{value: 1, unit: 'instances'}])
+      expect(@emitter.messages['reservable_stagers']).to eq([{value: 5, unit: 'stagers'}])
+      expect(@emitter.messages['available_memory_ratio']).to eq([{value: 0.22, unit: 'P'}])
+      expect(@emitter.messages['available_disk_ratio']).to eq([{value: 0.86, unit: 'P'}])
+      expect(@emitter.messages['avg_cpu_load']).to eq([{value: 0.15, unit: 'loadavg'}])
+      expect(@emitter.messages['mem_used_bytes']).to eq([{value: 1000, unit: 'B'}])
+      expect(@emitter.messages['mem_free_bytes']).to eq([{value: 100, unit: 'B'}])
     end
   end
 
@@ -404,26 +424,32 @@ describe Dea::Bootstrap do
     end
 
     it "starts nats" do
-      allow(bootstrap.nats).to receive(:start)
+      expect(bootstrap.nats).to receive(:start)
       bootstrap.start_nats
     end
+  end
 
-    it "sets up staging responder to respond to staging requests" do
+  describe '#start_staging_request_handler' do
+    before do
+      allow(EM).to receive(:add_periodic_timer)
+      allow(bootstrap).to receive(:uuid).and_return("unique-dea-id")
+      bootstrap.setup_nats
+
       bootstrap.setup_staging_task_registry
       bootstrap.setup_directory_server_v2
-      bootstrap.start_nats
+      bootstrap.setup_staging_responders
+      allow(Dea::Responders::Staging).to receive(:new).and_call_original
+      allow(Dea::Responders::NatsStaging).to receive(:new).and_call_original
+    end
 
-      responder = bootstrap.responders.detect { |r| r.is_a?(Dea::Responders::Staging) }
+    it "sets up staging responder to respond to nats staging requests" do
+      expect(Dea::Responders::NatsStaging).to receive(:new).with(bootstrap.nats, bootstrap.uuid, bootstrap.staging_responder, bootstrap.config)
+      bootstrap.start_nats_staging_request_handler
+
+      expect(bootstrap.staging_responder).to_not be_nil
+
+      responder = bootstrap.responders.detect { |r| r.is_a?(Dea::Responders::NatsStaging) }
       expect(responder).to_not be_nil
-
-      responder.tap do |r|
-        expect(r.nats).to be_a(Dea::Nats)
-        expect(r.dea_id).to be_a(String)
-        expect(r.bootstrap).to eq(bootstrap)
-        expect(r.staging_task_registry).to be_a(Dea::StagingTaskRegistry)
-        expect(r.dir_server).to be_a(Dea::DirectoryServerV2)
-        expect(r.config).to be_a(Dea::Config)
-      end
     end
   end
 
@@ -437,15 +463,13 @@ describe Dea::Bootstrap do
       bootstrap.setup_staging_task_registry
       bootstrap.setup_resource_manager
       bootstrap.start_nats
+      bootstrap.setup_hm9000
+      allow(bootstrap.hm9000).to receive(:send_heartbeat)
+      bootstrap.setup_cloud_controller_client
     end
 
     it "advertises dea" do
       allow_any_instance_of(Dea::Responders::DeaLocator).to receive(:advertise)
-      bootstrap.start_finish
-    end
-
-    it "advertises staging" do
-      allow_any_instance_of(Dea::Responders::StagingLocator).to receive(:advertise)
       bootstrap.start_finish
     end
 
@@ -463,7 +487,7 @@ describe Dea::Bootstrap do
       end
 
       it "heartbeats its registry" do
-        allow(bootstrap).to receive(:send_heartbeat)
+        expect(bootstrap).to receive(:send_heartbeat)
         bootstrap.start_finish
       end
     end
@@ -533,7 +557,7 @@ describe Dea::Bootstrap do
     it "creates an instance" do
       allow(bootstrap.instance_manager).to receive(:create_instance).with(instance_data).and_return(instance)
       allow(instance).to receive(:start)
-      bootstrap.handle_dea_directed_start(Dea::Nats::Message.new(nil, nil, instance_data, nil))
+      bootstrap.start_app(Dea::Nats::Message.new(nil, nil, instance_data, nil).data)
     end
   end
 
@@ -625,11 +649,13 @@ describe Dea::Bootstrap do
       expect(bootstrap).to receive(:snapshot) { double(:snapshot, :load => nil) }
       expect(bootstrap).to receive(:download_buildpacks)
       expect(bootstrap).to receive(:setup_sweepers)
-      expect(bootstrap).to receive(:start_nats)
       expect(bootstrap).to receive(:directory_server_v2) { double(:directory_server_v2, :start => nil) }
       expect(bootstrap).to receive(:setup_register_routes)
       expect(bootstrap).to receive(:start_finish)
       expect(bootstrap).to receive(:start_metrics)
+      expect(bootstrap).to receive(:start_nats).ordered
+      expect(bootstrap).to receive(:start_nats_staging_request_handler).ordered
+      expect(bootstrap).to receive(:http_server).ordered { double(:http_server, :start => nil) }
 
       bootstrap.start
     end
@@ -640,10 +666,12 @@ describe Dea::Bootstrap do
         allow(bootstrap).to receive(:download_buildpacks)
         allow(bootstrap).to receive(:setup_sweepers)
         allow(bootstrap).to receive(:start_nats)
+        allow(bootstrap).to receive(:http_server) { double(:http_server, :start => nil) }
         allow(bootstrap).to receive(:directory_server_v2) { double(:directory_server_v2, :start => nil) }
         allow(bootstrap).to receive(:setup_register_routes)
         allow(bootstrap).to receive(:start_finish)
         allow(bootstrap).to receive(:start_metrics)
+        allow(bootstrap).to receive(:start_nats_staging_request_handler)
         allow(bootstrap).to receive(:snapshot).and_call_original
       end
 
@@ -657,22 +685,49 @@ describe Dea::Bootstrap do
     end
   end
 
-  describe "send_heartbeat" do
+  describe '#send_heartbeat' do
     before do
       allow(EM).to receive(:add_periodic_timer).and_return(nil)
       allow(EM).to receive(:add_timer).and_return(nil)
-      bootstrap.setup_nats
-      bootstrap.start_nats
+      bootstrap.setup_hm9000
     end
 
     context "when there are no registered instances" do
+      let(:heartbeat) do
+        {
+          "droplets" => [],
+          "dea"      => bootstrap.uuid,
+        }
+      end
       it "publishes an empty dea.heartbeat" do
-        allow(nats_mock).to receive(:publish)
+        expect(bootstrap.hm9000).to receive(:send_heartbeat).with(heartbeat)
 
         bootstrap.send_heartbeat
-
-        expect(nats_mock).to have_received(:publish).with("dea.heartbeat", anything)
       end
+    end
+  end
+
+  describe "#setup_hm9000" do
+    it 'initializes hm9000' do
+      bootstrap.setup_hm9000
+      expect(bootstrap.hm9000).to_not be_nil
+      expect(bootstrap.hm9000).to be_a_kind_of(HM9000)
+    end
+  end
+
+  describe '#setup_cloud_controller_client' do
+    it 'initializes the cloud_controller client' do
+      bootstrap.setup_cloud_controller_client
+      expect(bootstrap.cloud_controller_client).to_not be_nil
+      expect(bootstrap.cloud_controller_client).to be_a_kind_of(Dea::CloudControllerClient)
+    end
+  end
+
+  describe '#setup_staging_responders' do
+    it 'initializes the generic and http staging responders' do
+      bootstrap.setup_staging_responders
+      expect(bootstrap.http_staging_responder).to_not be_nil
+      expect(bootstrap.staging_responder).to_not be_nil
     end
   end
 
@@ -681,7 +736,7 @@ describe Dea::Bootstrap do
 
     before do
       @config['staging'] = { 'enabled' => true }
-      @config['cc_url'] = 'https://user:password@api.localhost.xip.io'
+      @config['cc_url'] = 'https://user:password@api.example.com'
     end
 
     context 'when staging is disabled' do
@@ -712,6 +767,26 @@ describe Dea::Bootstrap do
 
         with_event_machine { bootstrap.download_buildpacks }
       end
+    end
+  end
+
+  describe '#stage_app_request' do
+    let(:data) { {'foo' => 'bar'} }
+    let(:evac_handler) { double('evac_handler', evacuating?: false) }
+    let(:shutdown_handler) { double('shutdown_handler', shutting_down?: false) }
+
+    before do
+      allow(bootstrap).to receive(:evac_handler).and_return(evac_handler)
+      allow(bootstrap).to receive(:shutdown_handler).and_return(shutdown_handler)
+
+      allow(EM).to receive(:add_periodic_timer)
+      bootstrap.setup_staging_responders
+    end
+
+
+    it "sends a staging request to the handler" do
+      expect(bootstrap.http_staging_responder).to receive(:handle).with(data)
+      bootstrap.stage_app_request(data)
     end
   end
 end

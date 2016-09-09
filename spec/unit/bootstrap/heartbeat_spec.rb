@@ -3,29 +3,42 @@
 require "spec_helper"
 require "dea/bootstrap"
 
-describe Dea do
+describe Dea, :order => :defined do
   include_context "bootstrap_setup"
+  let(:port) {25432}
 
   it "should periodically send out heartbeats on 'dea.heartbeat' for all instances" do
     allow(bootstrap).to receive(:setup_sweepers).and_call_original
+    allow(bootstrap).to receive(:setup_hm9000).and_call_original
 
     instances = []
     heartbeats = []
 
-    # Unregister an instance with each heartbeat received
-    nats_mock.subscribe("dea.heartbeat") do |msg, _|
-      heartbeats << Yajl::Parser.parse(msg)
-      if heartbeats.size == 5
-        done
-      else
-        bootstrap.instance_registry.unregister(instances[heartbeats.size - 1])
-      end
-    end
-
     with_event_machine(:timeout => 1) do
+
+      # Unregister an instance with each heartbeat received
+      http_server =
+          Thin::Server.new('0.0.0.0', port, lambda { |env|
+            heartbeats << Yajl::Parser.parse(env['rack.input'])
+            if heartbeats.size == 5 
+              done
+            else
+              bootstrap.instance_registry.unregister(instances[heartbeats.size-1])
+            end
+            [202, {}, ''] }, { signals: false })
+
+        http_server.ssl = true
+        http_server.ssl_options = {
+          private_key_file: fixture("/certs/hm9000_server.key"),
+          cert_chain_file: fixture("/certs/hm9000_server.crt"),
+          verify_peer: true,
+        }
+
+      http_server.start
+
       # Hack to not have the test take too long because heartbeat interval is defined
       # as an Integer in the schema.
-      bootstrap.config['intervals']['heartbeat'] = 0.01
+      bootstrap.config['intervals']['heartbeat'] = 0.1
 
       bootstrap.setup
       bootstrap.start
@@ -55,14 +68,24 @@ describe Dea do
   end
 
   describe "instance state filtering" do
-    def run
-      heartbeat = nil
-      nats_mock.subscribe("dea.heartbeat") do |msg, _|
-        heartbeat = Yajl::Parser.parse(msg)
-        done
-      end
+    def run(port=25432)
 
+      heartbeat = ""
       with_event_machine(:timeout => 1) do
+        http_server =
+          Thin::Server.new('0.0.0.0', port, lambda { |env|
+            heartbeat = Yajl::Parser.parse(env['rack.input'])
+            done
+            [202, {}, ''] }, { signals: false })
+
+        http_server.ssl = true
+        http_server.ssl_options = {
+          private_key_file: fixture("/certs/hm9000_server.key"),
+          cert_chain_file: fixture("/certs/hm9000_server.crt"),
+          verify_peer: true,
+        }
+
+        http_server.start
         bootstrap.setup
         yield
         bootstrap.start
@@ -80,27 +103,36 @@ describe Dea do
 
     Dea::Instance::State.constants.map do |constant|
       Dea::Instance::State.const_get(constant)
-    end.each do |state|
+    end.each_with_index do |state, index|
       if matching_states.include?(state)
         it "should include #{state.inspect}" do
           allow(bootstrap).to receive(:start_finish).and_call_original
 
-          heartbeat = run do
+          bootstrap.config['hm9000']['listener_uri'] = "https://127.0.0.1:#{port+index+5}"
+
+          heartbeat = run(port+index+5) do
+            expect(bootstrap.instance_registry.size).to eq(0)
             instance = create_and_register_instance(bootstrap)
             instance.state = state
           end
 
-          expect(heartbeat).to_not be_nil, "expected #{state} to be included in heartbeat"
+          expect(heartbeat["dea"]).to eq(bootstrap.uuid)
+          expect(heartbeat).to_not be_empty
+          expect(heartbeat["droplets"][0]["state"]).to eq(state), "expected #{state} to be included in heartbeat"
         end
       else
         it "should exclude #{state.inspect}" do
           allow(bootstrap).to receive(:start_finish).and_call_original
 
-          heartbeat = run do
+          bootstrap.config['hm9000']['listener_uri'] = "https://127.0.0.1:#{port+index+5}"
+
+          heartbeat = run(port+index+5) do
+            expect(bootstrap.instance_registry.size).to eq(0)
             instance = create_and_register_instance(bootstrap)
             instance.state = state
           end
-
+          
+          expect(heartbeat["dea"]).to eq(bootstrap.uuid)
           expect(heartbeat["droplets"]).to be_empty, "expected #{state} not to be included in heartbeat"
         end
       end

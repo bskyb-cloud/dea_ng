@@ -39,6 +39,17 @@ shared_context "bootstrap_setup" do
       ],
       "placement_properties" => {
         "zone" => "z1"
+      },
+      "ssl" => {
+        "port" => 8443,
+        "key_file" => fixture('/certs/server.key'),
+        "cert_file" => fixture('/certs/server.crt')
+      },
+      "hm9000" => {
+        "listener_uri" => "https://127.0.0.1:25432",
+        "key_file" => fixture("/certs/hm9000_client.key"),
+        "cert_file" => fixture("/certs/hm9000_client.crt"),
+        "ca_file" => fixture("/certs/hm9000_ca.crt"),
       }
     }
 
@@ -59,16 +70,15 @@ shared_context "bootstrap_setup" do
     allow(bootstrap).to receive(:setup_directories)
     allow(bootstrap).to receive(:setup_pid_file)
     allow(bootstrap).to receive(:setup_sweepers)
-    allow(bootstrap).to receive(:setup_directory_server)
     allow(bootstrap).to receive(:setup_directory_server_v2)
     allow(bootstrap).to receive(:setup_router_client)
 
     allow(bootstrap).to receive(:start_component)
+    allow(bootstrap).to receive(:start_http_server)
     allow(bootstrap).to receive(:start_directory_server)
     allow(bootstrap).to receive(:register_directory_server_v2)
     allow(bootstrap).to receive(:start_finish)
 
-    allow(bootstrap).to receive(:setup_directory_server_v2)
     allow(bootstrap).to receive(:directory_server_v2) { double(:directory_server, :start => nil) }
     bootstrap
   end

@@ -3,7 +3,6 @@ require "net/ssh"
 require "shellwords"
 
 require_relative "process_helpers"
-require_relative "local_ip_finder"
 
 require "dea/config"
 
@@ -15,7 +14,7 @@ module DeaHelpers
           s = TCPSocket.new(ip, port)
           s.close
           return true
-        rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
+        rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Errno::ECONNRESET
           return false
         end
       end
@@ -50,10 +49,11 @@ module DeaHelpers
   end
 
   def start_file_server
-    local_ip = LocalIPFinder.new.find
-    `sudo /sbin/iptables -I INPUT 2 -j ACCEPT -p tcp --dport 10197 -d #{local_ip.ip_address}`
+    local_ip = Dea.local_ip
+    `sudo /sbin/iptables -I INPUT 2 -j ACCEPT -p tcp --dport 10197 -d #{local_ip}`
     @file_server_pid = run_cmd("bundle exec ruby spec/bin/file_server.rb", :debug => true)
-    wait_until { is_port_open?(local_ip.ip_address, 10197) }
+    sleep 1
+    wait_until { is_port_open?(local_ip, 10197) }
   end
 
   def stop_file_server
@@ -66,9 +66,9 @@ module DeaHelpers
   end
 
   def file_server_address
-    local_ip = LocalIPFinder.new.find
+    local_ip = Dea.local_ip
 
-    "#{local_ip.ip_address}:10197"
+    "#{local_ip}:10197"
   end
 
   def dea_start(extra_config={})
@@ -76,8 +76,8 @@ module DeaHelpers
 
     Timeout.timeout(10) do
       begin
-        heartbeat = nats.with_subscription("dea.heartbeat") {}
-        puts "dea server started, heartbeat received"
+        advertise = nats.with_subscription("dea.advertise") {}
+        puts "dea server started, dea.advertise received"
       rescue NATS::ConnectError, Timeout::Error
         # Ignore because either NATS is not running, or DEA is not running.
       end
@@ -116,8 +116,30 @@ module DeaHelpers
   end
 
   def wait_until_instance_evacuating(app_id)
-    heartbeat = nats.with_subscription("dea.heartbeat") {}
-    heartbeat["droplets"].detect  { |instance| instance.fetch("state") == "EVACUATING" && instance.fetch("droplet") == app_id }
+    uri = URI.join(dea_config['hm9000']['listener_uri'], "/dea/heartbeat")
+
+    heartbeat = ""
+    with_event_machine(:timeout => 10) do
+      http_server =
+        Thin::Server.new('0.0.0.0', uri.port, lambda { |env|
+          heartbeat = Yajl::Parser.parse(env['rack.input'])
+          if heartbeat["droplets"].detect  { |instance| instance.fetch("state") == "EVACUATING" && instance.fetch("droplet") == app_id }
+            done
+          end
+
+          [202, {}, ''] }, { signals: false })
+
+      http_server.ssl = true
+      http_server.ssl_options = {
+        private_key_file: fixture('/certs/hm9000_server.key'),
+        cert_chain_file: fixture('/certs/hm9000_server.crt'),
+        verify_peer: true,
+      }
+
+      http_server.start
+    end
+
+    return heartbeat["droplets"].detect  { |instance| instance.fetch("state") == "EVACUATING" && instance.fetch("droplet") == app_id }
   end
 
   def wait_until(timeout = 5, &block)
@@ -154,11 +176,17 @@ module DeaHelpers
       f.write(YAML.dump(config.merge(extra_config)))
       f.close
 
-      run_cmd "mkdir -p tmp/logs && bundle exec bin/dea #{f.path} 2>&1 >>tmp/logs/dea.log"
+      @running = true
+      run_cmd "mkdir -p tmp/logs && bundle exec bin/dea #{f.path} 1>tmp/logs/dea.log 2>tmp/logs/dea.err.log"
     end
 
     def stop
+      @running = false
       graceful_kill(pid) if pid
+    end
+
+    def running?
+      @running
     end
 
     def pid
@@ -172,9 +200,15 @@ module DeaHelpers
     def config
       @config ||= begin
         config = YAML.load(File.read("config/dea.yml"))
-        config["domain"] = LocalIPFinder.new.find.ip_address+".xip.io"
+        config["domain"] = Dea.local_ip
         config["intervals"] = {
           "advertise" => 1
+        }
+        config["hm9000"] = {
+          'listener_uri' => "https://127.0.0.1:3569",
+          'key_file' => fixture('/certs/hm9000_client.key'),
+          'cert_file' => fixture("/certs/hm9000_client.crt"),
+          'ca_file' => fixture("/certs/hm9000_ca.crt"),
         }
         config
       end

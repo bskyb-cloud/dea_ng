@@ -18,6 +18,8 @@ require 'timecop'
 require 'timeout'
 require_relative '../buildpacks/lib/buildpack'
 require 'webmock/rspec'
+require 'rspec/eventually'
+require "dea/utils"
 
 Dir[File.join(SPEC_ROOT, 'support/**/*.rb')].map { |f| require f }
 

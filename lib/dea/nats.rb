@@ -24,7 +24,7 @@ module Dea
       end
 
       subscribe("dea.#{bootstrap.uuid}.start") do |message|
-        bootstrap.handle_dea_directed_start(message)
+        bootstrap.start_app(message.data)
       end
 
       subscribe("dea.stop") do |message|
@@ -102,6 +102,7 @@ module Dea
         :servers => config["nats_servers"],
         :max_reconnect_attempts => -1,
         :dont_randomize_servers => false,
+        :ping_interval => 30,
       )
     end
 
@@ -123,9 +124,11 @@ module Dea
         @respond_to = respond_to
       end
 
-      def respond(data)
+      def respond(data, &blk)
         message = response(data)
         message.publish
+
+        blk.call if blk
       end
 
       def response(data)

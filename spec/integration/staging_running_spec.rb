@@ -1,6 +1,6 @@
 require "spec_helper"
 
-describe "Running an app immediately after staging", :type => :integration, :requires_warden => true do
+describe "Running an app immediately after staging over nats", :type => :integration, :requires_warden => true do
   let(:unstaged_url) { "http://#{file_server_address}/unstaged/sinatra" }
   let(:staged_url) { "http://#{file_server_address}/staged/sinatra" }
   let(:buildpack_cache_download_uri) { "http://#{file_server_address}/buildpack_cache" }
@@ -82,10 +82,6 @@ describe "Running an app immediately after staging", :type => :integration, :req
       expect(File.exist?(uploaded_droplet)).to be true
     end
 
-    and_by "exports user variables before .profile.d" do
-      output = `curl -s http://#{dea_server.host}:#{port}/`
-      expect(output).to include('VERIFYING_VARIABLE_DECLARATION_ORDER=SECOND')
-    end
 
     and_by "running on cflinuxfs2" do
       droplet_message = Yajl::Encoder.encode("droplet" => app_id, "states" => ["RUNNING"])
@@ -106,5 +102,14 @@ describe "Running an app immediately after staging", :type => :integration, :req
         end
       end
     end
+
+    and_by "exports user variables before .profile.d" do
+      expect(Rspec::Eventually::Eventually.new(include('VERIFYING_VARIABLE_DECLARATION_ORDER=SECOND')).matches? -> {
+        `curl http://#{dea_server.host}:#{port}/`
+      }).to be true
+    end
   end
+end
+
+describe "Running an app immediately after staging over http", :type => :integration, :requires_warden => true do
 end

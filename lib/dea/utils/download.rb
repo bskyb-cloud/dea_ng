@@ -1,3 +1,5 @@
+require 'dea/utils/uri_cleaner'
+
 class Download
   attr_reader :source_uri, :destination_file, :sha1_expected
   attr_reader :logger
@@ -34,10 +36,11 @@ class Download
       sha1 << chunk
     end
 
-    context = {:droplet_uri => source_uri}
+    context = {:droplet_uri => URICleaner.clean(source_uri)}
 
     http.errback do
       begin
+        destination_file.close
         msg = "Response status: unknown, Error: #{http.error}"
         error = DownloadError.new(msg, context)
         logger.error("em-http-request.errored", error: error.message, data: error.data)

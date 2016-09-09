@@ -1,5 +1,7 @@
 # coding: UTF-8
 
+require 'vmstat'
+
 module Dea
   class ResourceManager
     DEFAULT_CONFIG = {
@@ -66,6 +68,28 @@ module Dea
 
     def remaining_disk
       disk_capacity - reserved_disk
+    end
+
+    def available_memory_ratio
+      1.0 - (reserved_memory.to_f / memory_capacity)
+    end
+
+    def available_disk_ratio
+      1.0 - (reserved_disk.to_f / disk_capacity)
+    end
+
+    def cpu_load_average
+       Vmstat.load_average.one_minute
+    end
+
+    def memory_used_bytes
+      mem = Vmstat.memory
+      mem.active_bytes + mem.wired_bytes
+    end
+
+    def memory_free_bytes
+      mem = Vmstat.memory
+      mem.inactive_bytes + mem.free_bytes
     end
 
     private

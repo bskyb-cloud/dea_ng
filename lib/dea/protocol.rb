@@ -8,7 +8,7 @@ end
 
 module Dea::Protocol::V1
   class HeartbeatResponse
-    def self.generate(bootstrap, instances)
+    def self.generate(uuid, instances)
       hbs = instances.map do |instance|
         {
           "cc_partition"    => instance.cc_partition,
@@ -22,7 +22,7 @@ module Dea::Protocol::V1
       end
 
       { "droplets" => hbs,
-        "dea"      => bootstrap.uuid,
+        "dea"      => uuid,
       }
     end
   end
@@ -56,7 +56,7 @@ module Dea::Protocol::V1
           "fds_quota"  => instance.file_descriptor_limit,
           "usage"      => {
             "time" => Time.now.to_s,
-            "cpu"  => instance.stat_collector.computed_pcpu,
+            "cpu"  => instance.stat_collector.computed_dcpu,
             "mem"  => instance.stat_collector.used_memory_in_bytes,
             "disk" => instance.stat_collector.used_disk_in_bytes,
           },
@@ -72,7 +72,7 @@ module Dea::Protocol::V1
   class SSHDropletResponse
     def self.generate(port, sshkey)
       { 
-        "ip" => VCAP.local_ip,
+        "ip" => Dea.local_ip,
         "sshkey" => sshkey,
         "user" => "vcap",
         "port" => port
@@ -82,8 +82,9 @@ module Dea::Protocol::V1
 
   class AdvertiseMessage
     def self.generate(message={})
-      { "id" => message[:id],
+      result = { "id" => message[:id],
         "stacks" => message[:stacks],
+        "url" => message[:url],
         "available_memory" => message[:available_memory],
         "available_disk" => message[:available_disk],
         "app_id_to_count" => message[:app_id_to_count],

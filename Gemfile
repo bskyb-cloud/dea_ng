@@ -1,6 +1,6 @@
 source 'https://rubygems.org'
 
-gem 'eventmachine', '~> 1.0.3'
+gem 'eventmachine'
 gem 'em-http-request'
 gem 'em-synchrony'
 
@@ -14,9 +14,13 @@ gem 'rake'
 gem 'thin'
 gem 'yajl-ruby', require: %w[yajl yajl/json_gem]
 gem 'grape', git: 'https://github.com/intridea/grape.git'
+gem 'httpclient'
 
-gem 'vcap_common'
 gem 'steno', '~> 1.1.0'
+
+gem 'membrane'
+gem 'posix-spawn', '~> 0.3.6'
+gem 'uuidtools'
 
 gem 'vmstat'
 
@@ -32,8 +36,10 @@ group :test do
   gem 'patron'
   gem 'rack-test'
   gem 'rspec'
+  gem 'rspec-eventually'
   gem 'rubyzip'
   gem 'sinatra'
   gem 'timecop'
   gem 'webmock'
+  gem 'pry'
 end
