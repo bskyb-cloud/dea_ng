@@ -457,11 +457,22 @@ module Dea
       end
     end
 
+
+    def resolve_name_to_ip(host_or_ip)
+      if !!(host_or_ip =~ Resolv::IPv4::Regex)
+        # ip address, do not resolve
+        host_or_ip
+      else
+        # name, need to be resolved
+        %x[dig +short #{host_or_ip}].strip
+      end
+    end
+
     def setup_firewall(credentials)
-        credentials['host'].split(/\s*,\s*/).each do |host|
-          ip = %x[dig +short #{host}].strip
-          Dea::Loggregator.emit(application_id, "Opening up service firewall to #{host}:#{credentials['port']}")
-            container.open_network_destination(ip, credentials['port'].to_i)
+        credentials['host'].split(/\s*,\s*/).each do |host_or_ip|
+          ip = resolve_name_to_ip(host_or_ip)
+          Dea::Loggregator.emit(application_id, "Opening up service firewall to #{ip}:#{credentials['port']}")
+          container.open_network_destination(ip, credentials['port'].to_i)
         end
     end
 
@@ -479,19 +490,18 @@ module Dea
 
               if response[:stdout]
                 response[:stdout].split(/\n/).each do |line|
-                  host, port = line.split(/:/)
-                  ip = %x[dig +short #{host}].strip
-                  Dea::Loggregator.emit(application_id, "Opening up user requested firewall to #{host}:#{port}")
+                  ip, port = line.split(/:/)
+                  Dea::Loggregator.emit(application_id, "Opening up user requested firewall to #{ip}:#{port}")
                   container.open_network_destination(ip, port.to_i)
                 end
               end
 
               attributes['services'].each do |svc|
                 if svc['credentials']['firewall_allow_rules']
-                  svc['credentials']['firewall_allow_rules'].split(/\s*,\s*/).each do |network|
+                  svc['credentials']['firewall_allow_rules'].split(/\s*,\s*/).each do |host_or_ip|
                     port = svc['credentials']['port']
-                    ip = %x[dig +short #{network}].strip
-                    Dea::Loggregator.emit(application_id, "Opening up service firewall based on firewall_allow_rules to #{network}:#{port}")
+                    ip = resolve_name_to_ip(host_or_ip)
+                    Dea::Loggregator.emit(application_id, "Opening up service firewall based on firewall_allow_rules to #{ip}:#{port}")
                     container.open_network_destination(ip, port.to_i)
                   end
                 else
