@@ -12,4 +12,4 @@
 	url = https://github.com/go-check/check
 [submodule "github.com/go-fsnotify/fsnotify"]
 	path = go/src/github.com/go-fsnotify/fsnotify
-	url = https://github.com/go-fsnotify/fsnotify
+url=https://github.com/fsnotify/fsnotify
